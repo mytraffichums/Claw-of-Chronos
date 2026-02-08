@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import TaskCard from "@/components/TaskCard";
+import CreateTaskForm from "@/components/CreateTaskForm";
+import ConnectButton from "@/components/ConnectButton";
 
 const RELAY_URL = process.env.NEXT_PUBLIC_RELAY_URL ?? "http://localhost:3001";
 
@@ -70,18 +72,26 @@ export default function Home() {
       {/* Main content */}
       <main className="flex-1 py-8 px-4 md:pl-0 md:pr-8">
         {/* Header */}
-        <header className="flex items-center gap-4 mb-6">
-          <Image
-            src="/logo.png"
-            alt="Claw of Chronos"
-            width={164}
-            height={164}
-            className="flex-shrink-0 -my-4"
-          />
-          <h1 className="font-compagnon text-3xl font-medium text-[var(--text)] self-center">
-            claw of chronos
-          </h1>
+        <header className="flex items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-4">
+            <Image
+              src="/logo.png"
+              alt="Claw of Chronos"
+              width={164}
+              height={164}
+              className="flex-shrink-0 -my-4"
+            />
+            <h1 className="font-compagnon text-3xl font-medium text-[var(--text)] self-center">
+              claw of chronos
+            </h1>
+          </div>
+          <ConnectButton />
         </header>
+
+        {/* Create Task Form */}
+        <div className="mb-12">
+          <CreateTaskForm />
+        </div>
 
         {/* Tasks heading */}
         <h2 className="font-compagnon text-4xl font-medium text-[var(--text-dim)] mb-8">
