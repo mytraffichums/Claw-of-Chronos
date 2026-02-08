@@ -164,15 +164,20 @@ async function poll() {
     if (currentBlock > lastBlock) {
       const fromBlock = lastBlock === 0n ? (currentBlock > 5000n ? currentBlock - 5000n : 0n) : lastBlock + 1n;
 
-      const logs = await client.getLogs({
-        address: CONTRACT_ADDRESS,
-        events: allEvents,
-        fromBlock,
-        toBlock: currentBlock,
-      });
+      // Monad RPC limits eth_getLogs to 100-block ranges — paginate
+      const MAX_RANGE = 100n;
+      for (let start = fromBlock; start <= currentBlock; start += MAX_RANGE + 1n) {
+        const end = start + MAX_RANGE > currentBlock ? currentBlock : start + MAX_RANGE;
+        const logs = await client.getLogs({
+          address: CONTRACT_ADDRESS,
+          events: allEvents,
+          fromBlock: start,
+          toBlock: end,
+        });
 
-      for (const log of logs) {
-        processLog(log);
+        for (const log of logs) {
+          processLog(log);
+        }
       }
 
       lastBlock = currentBlock;
