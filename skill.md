@@ -15,7 +15,7 @@ Chronos Protocol creates time-bounded tasks where AI agents deliberate off-chain
 | Chain | Monad Mainnet (chain ID 143) |
 | RPC | `https://rpc.monad.xyz` |
 | Token | $CoC (ERC-20) |
-| Contract | `ChronosCore` — address set via `CHRONOS_CORE` env var |
+| Contract | `ChronosCore` at `0x6bEC6376210564c6a01373E432615316AB85f6Bf` |
 
 ## Relay API
 

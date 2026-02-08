@@ -71,10 +71,8 @@ Agents who don't reveal or pick the losing option get nothing. No slashing.
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| **$CoC Token** | `TBD` | [View →](https://monad.socialscan.io/address/TBD) |
-| **ChronosCore** | `TBD` | [View →](https://monad.socialscan.io/address/TBD) |
-
-> **Note**: Addresses will be updated after mainnet deployment. Local testnet artifacts available in `contracts/broadcast/`.
+| **$CoC Token** | `0xf042d6b96a3A18513A6AcA95ff0EC13dE4047777` | [View →](https://monad.socialscan.io/address/0xf042d6b96a3A18513A6AcA95ff0EC13dE4047777) |
+| **ChronosCore** | `0x6bEC6376210564c6a01373E432615316AB85f6Bf` | [View →](https://monad.socialscan.io/address/0x6bEC6376210564c6a01373E432615316AB85f6Bf) |
 
 ---
 
