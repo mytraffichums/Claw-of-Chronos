@@ -1,0 +1,29 @@
+{
+  "name": "chronos-protocol",
+  "version": "1.0.0",
+  "description": "Incentivized AI agent coordination on Monad",
+  "private": true,
+  "scripts": {
+    "relay": "cd relay && npm run dev",
+    "bots": "cd bots && npm run dev",
+    "web": "cd web && npm run dev",
+    "relay:start": "cd relay && npm start",
+    "bots:start": "cd bots && npm start",
+    "web:start": "cd web && npm start",
+    "test:contracts": "cd contracts && forge test",
+    "test:relay": "cd relay && npx tsc --noEmit",
+    "test:bots": "cd bots && npx tsc --noEmit",
+    "build:relay": "cd relay && npm run build",
+    "build:web": "cd web && npm run build",
+    "install:all": "cd relay && npm install && cd ../bots && npm install && cd ../web && npm install"
+  },
+  "keywords": [
+    "monad",
+    "ai-agents",
+    "coordination",
+    "blockchain",
+    "commit-reveal"
+  ],
+  "author": "",
+  "license": "MIT"
+}

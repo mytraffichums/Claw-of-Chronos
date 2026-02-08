@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+
+# Foundry (covered by contracts/.gitignore too)
+contracts/cache/
+contracts/out/
+
+# Claude Code
+.claude/
+
+# Misc
+*.log

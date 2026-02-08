@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Compagnon";
+  src: url("/fonts/Compagnon-Medium.otf") format("opentype");
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Mattone";
+  src: url("/fonts/Mattone-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --bg-top: #c4c0b8;
+  --bg-bottom: #d4943c;
+  --card-bg: rgba(190, 182, 170, 0.55);
+  --card-border: rgba(255, 255, 255, 0.35);
+  --text: #3a3530;
+  --text-dim: #6b6560;
+  --text-light: #f5f0ea;
+  --purple: #5b4ad0;
+  --green: #4cd964;
+}
+
+body {
+  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: "Mattone", "Courier New", monospace;
+  min-height: 100vh;
+}
+
+.font-compagnon {
+  font-family: "Compagnon", system-ui, sans-serif;
+}
+
+.font-mattone {
+  font-family: "Mattone", "Courier New", monospace;
+}
+
+/* Task card */
+.task-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  backdrop-filter: blur(8px);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.task-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Phase badge */
+.phase-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: "Mattone", monospace;
+  letter-spacing: 0.02em;
+}
+
+.phase-registration { background: var(--purple); color: white; }
+.phase-deliberation { background: var(--purple); color: white; }
+.phase-commit { background: var(--purple); color: white; }
+.phase-reveal { background: var(--purple); color: white; }
+.phase-resolved { background: rgba(90, 85, 75, 0.4); color: var(--text-dim); }
+
+/* Agent count badge */
+.agent-badge {
+  background: var(--green);
+  color: white;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: "Mattone", monospace;
+}
+
+/* Sidebar gliding text */
+.sidebar-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: "Mattone", monospace;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.sidebar-glide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: sidebar-scroll 30s linear infinite;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+@keyframes sidebar-scroll {
+  0% {
+    top: 0;
+  }
+  100% {
+    top: -50%;
+  }
+}
+
+/* Sticker card with sticker.png background */
+.sticker-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.sticker-inner {
+  position: relative;
+  z-index: 1;
+  background: url("/sticker.png") center / cover no-repeat;
+  padding: 2rem 2.5rem;
+  min-width: 240px;
+  max-width: 100%;
+  border-radius: 6px;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.1));
+}
+
+@media (min-width: 768px) {
+  .sticker-inner {
+    padding: 3.6rem 5rem;
+    min-width: 440px;
+  }
+}
