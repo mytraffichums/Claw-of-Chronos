@@ -194,21 +194,41 @@ async function poll() {
 
       // Monad RPC limits eth_getLogs to 100-block ranges — paginate
       const MAX_RANGE = 100n;
+      const totalPages = Number((currentBlock - fromBlock) / (MAX_RANGE + 1n)) + 1;
+      const isCatchup = totalPages > 10;
+      if (isCatchup) console.log(`[chain] catching up: scanning ${totalPages} pages from block ${fromBlock}...`);
+      let pagesDone = 0;
+
       for (let start = fromBlock; start <= currentBlock; start += MAX_RANGE + 1n) {
         const end = start + MAX_RANGE > currentBlock ? currentBlock : start + MAX_RANGE;
-        const logs = await client.getLogs({
-          address: CONTRACT_ADDRESS,
-          events: allEvents,
-          fromBlock: start,
-          toBlock: end,
-        });
+        try {
+          const logs = await client.getLogs({
+            address: CONTRACT_ADDRESS,
+            events: allEvents,
+            fromBlock: start,
+            toBlock: end,
+          });
 
-        for (const log of logs) {
-          processLog(log);
+          for (const log of logs) {
+            processLog(log);
+          }
+          lastBlock = end;
+          pagesDone++;
+
+          // Rate-limit during catchup to avoid 429s
+          if (isCatchup && pagesDone % 50 === 0) {
+            console.log(`[chain] catchup progress: ${pagesDone}/${totalPages}`);
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        } catch (err) {
+          console.error(`[chain] getLogs error at block ${start}:`, err instanceof Error ? err.message : String(err));
+          // Save progress and retry remaining range next poll
+          await new Promise((r) => setTimeout(r, 2000));
+          break;
         }
       }
 
-      lastBlock = currentBlock;
+      if (isCatchup && lastBlock >= currentBlock) console.log(`[chain] catchup complete, ${tasks.size} tasks loaded`);
     }
 
     // Update phases based on current time
