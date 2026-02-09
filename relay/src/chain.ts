@@ -53,7 +53,16 @@ export function getTask(id: number): CachedTask | undefined {
   return tasks.get(id);
 }
 
-// ── ABI fragments for events ───────────────────────────────────────────
+// ── Contract ABI fragments ───────────────────────────────────────────
+const contractAbi = [
+  parseAbiItem("function taskCount() view returns (uint256)"),
+  parseAbiItem("function getTask(uint256 taskId) view returns (address creator, string description, string[] options, uint256 requiredAgents, uint256 deliberationDuration, uint256 bounty, uint256 deliberationStart, uint8 phase, bool resolved, bool cancelled, uint256 winningOption, bool isTie)"),
+  parseAbiItem("function getAgents(uint256 taskId) view returns (address[])"),
+  parseAbiItem("function revealCount(uint256 taskId) view returns (uint256)"),
+  parseAbiItem("function optionVotes(uint256 taskId, uint256 optionIndex) view returns (uint256)"),
+] as const;
+
+// ── Event ABI fragments ─────────────────────────────────────────────
 const taskCreatedEvent = parseAbiItem(
   "event TaskCreated(uint256 indexed taskId, address indexed creator, string description, string[] options, uint256 bounty, uint256 requiredAgents, uint256 deliberationDuration)"
 );
@@ -80,17 +89,88 @@ const taskResolvedEvent = parseAbiItem(
 );
 
 const allEvents = [
-  taskCreatedEvent,
-  taskStartedEvent,
-  taskCancelledEvent,
-  agentJoinedEvent,
-  phaseAdvancedEvent,
-  commitSubmittedEvent,
-  revealSubmittedEvent,
-  taskResolvedEvent,
+  taskCreatedEvent, taskStartedEvent, taskCancelledEvent,
+  agentJoinedEvent, phaseAdvancedEvent, commitSubmittedEvent,
+  revealSubmittedEvent, taskResolvedEvent,
 ];
 
-// ── Event processing ───────────────────────────────────────────────────
+// ── Hydrate from contract view functions on startup ─────────────────
+async function hydrateFromContract() {
+  console.log("[chain] hydrating task cache from contract...");
+
+  const count = await client.readContract({
+    address: CONTRACT_ADDRESS,
+    abi: contractAbi,
+    functionName: "taskCount",
+  });
+  const taskCount = Number(count);
+  console.log(`[chain] found ${taskCount} tasks on-chain`);
+
+  for (let id = 0; id < taskCount; id++) {
+    try {
+      const [creator, description, options, requiredAgents, deliberationDuration,
+        bounty, deliberationStart, phase, resolved, cancelled, winningOption, isTie] =
+        await client.readContract({
+          address: CONTRACT_ADDRESS,
+          abi: contractAbi,
+          functionName: "getTask",
+          args: [BigInt(id)],
+        });
+
+      const agents = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        abi: contractAbi,
+        functionName: "getAgents",
+        args: [BigInt(id)],
+      });
+
+      const rc = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        abi: contractAbi,
+        functionName: "revealCount",
+        args: [BigInt(id)],
+      });
+
+      // Read option votes
+      const votes: number[] = [];
+      for (let o = 0; o < options.length; o++) {
+        const v = await client.readContract({
+          address: CONTRACT_ADDRESS,
+          abi: contractAbi,
+          functionName: "optionVotes",
+          args: [BigInt(id), BigInt(o)],
+        });
+        votes.push(Number(v));
+      }
+
+      tasks.set(id, {
+        id,
+        creator,
+        description,
+        options: [...options],
+        bounty: bounty.toString(),
+        requiredAgents: Number(requiredAgents),
+        deliberationDuration: Number(deliberationDuration),
+        deliberationStart: Number(deliberationStart),
+        cancelled,
+        phase: Number(phase),
+        resolved,
+        winningOption: Number(winningOption),
+        isTie,
+        agents: [...agents],
+        revealCount: Number(rc),
+        optionVotes: votes,
+        reveals: [], // not available from view functions, only from events
+      });
+    } catch (err) {
+      console.error(`[chain] error reading task ${id}:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  console.log(`[chain] hydration complete, ${tasks.size} tasks cached`);
+}
+
+// ── Event processing (for live updates after hydration) ──────────────
 function processLog(log: Log<bigint, number, false>) {
   const raw = log as any;
   const eventName = raw.eventName as string;
@@ -174,7 +254,7 @@ function processLog(log: Log<bigint, number, false>) {
   }
 }
 
-// ── Poller ──────────────────────────────────────────────────────────────
+// ── Poller (only new events after hydration) ─────────────────────────
 let lastBlock = 0n;
 let polling = false;
 
@@ -185,50 +265,25 @@ async function poll() {
     const currentBlock = await client.getBlockNumber();
 
     if (currentBlock > lastBlock) {
-      // On first poll, look back far enough to catch all contract events
-      // CONTRACT_DEPLOY_BLOCK can be set to avoid scanning too many blocks
-      const DEPLOY_BLOCK = BigInt(process.env.DEPLOY_BLOCK ?? "0");
-      const fromBlock = lastBlock === 0n
-        ? (DEPLOY_BLOCK > 0n ? DEPLOY_BLOCK : (currentBlock > 50000n ? currentBlock - 50000n : 0n))
-        : lastBlock + 1n;
+      const fromBlock = lastBlock + 1n;
 
       // Monad RPC limits eth_getLogs to 100-block ranges — paginate
       const MAX_RANGE = 100n;
-      const totalPages = Number((currentBlock - fromBlock) / (MAX_RANGE + 1n)) + 1;
-      const isCatchup = totalPages > 10;
-      if (isCatchup) console.log(`[chain] catching up: scanning ${totalPages} pages from block ${fromBlock}...`);
-      let pagesDone = 0;
-
       for (let start = fromBlock; start <= currentBlock; start += MAX_RANGE + 1n) {
         const end = start + MAX_RANGE > currentBlock ? currentBlock : start + MAX_RANGE;
-        try {
-          const logs = await client.getLogs({
-            address: CONTRACT_ADDRESS,
-            events: allEvents,
-            fromBlock: start,
-            toBlock: end,
-          });
+        const logs = await client.getLogs({
+          address: CONTRACT_ADDRESS,
+          events: allEvents,
+          fromBlock: start,
+          toBlock: end,
+        });
 
-          for (const log of logs) {
-            processLog(log);
-          }
-          lastBlock = end;
-          pagesDone++;
-
-          // Rate-limit during catchup to avoid 429s
-          if (isCatchup && pagesDone % 50 === 0) {
-            console.log(`[chain] catchup progress: ${pagesDone}/${totalPages}`);
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-        } catch (err) {
-          console.error(`[chain] getLogs error at block ${start}:`, err instanceof Error ? err.message : String(err));
-          // Save progress and retry remaining range next poll
-          await new Promise((r) => setTimeout(r, 2000));
-          break;
+        for (const log of logs) {
+          processLog(log);
         }
       }
 
-      if (isCatchup && lastBlock >= currentBlock) console.log(`[chain] catchup complete, ${tasks.size} tasks loaded`);
+      lastBlock = currentBlock;
     }
 
     // Update phases based on current time
@@ -256,12 +311,17 @@ async function poll() {
   }
 }
 
-export function startPoller() {
+export async function startPoller() {
   if (!CONTRACT_ADDRESS) {
     console.error("[chain] FATAL: CHRONOS_CORE env var is required. Set it to the deployed ChronosCore contract address.");
     process.exit(1);
   }
-  console.log(`[chain] polling ${CONTRACT_ADDRESS} every ${POLL_INTERVAL}ms`);
-  poll();
+
+  // 1. Hydrate all existing tasks from contract state
+  await hydrateFromContract();
+
+  // 2. Start polling for new events from current block
+  lastBlock = await client.getBlockNumber();
+  console.log(`[chain] live polling from block ${lastBlock}, every ${POLL_INTERVAL}ms`);
   setInterval(poll, POLL_INTERVAL);
 }
