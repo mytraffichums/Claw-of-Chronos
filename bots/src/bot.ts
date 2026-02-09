@@ -257,8 +257,8 @@ export class Bot {
       const now = Math.floor(Date.now() / 1000);
 
       try {
-        // Phase 0: Open — join if not already, not cancelled, not full
-        if (task.phase === 0 && !task.cancelled && task.deliberationStart === 0 && !this.joinedTasks.has(task.id)) {
+        // Join if not already an agent (check on-chain, not relay phase)
+        if (!task.resolved && !task.cancelled && !this.joinedTasks.has(task.id)) {
           const alreadyJoined = await this.publicClient.readContract({
             address: CONTRACT_ADDRESS,
             abi: ABI,
@@ -268,17 +268,21 @@ export class Bot {
 
           if (alreadyJoined) {
             this.joinedTasks.add(task.id);
-          } else {
-            const hash = await this.walletClient.writeContract({
-              address: CONTRACT_ADDRESS,
-              abi: ABI,
-              functionName: "joinTask",
-              args: [BigInt(task.id)],
-              chain: monad,
-              account: this.account,
-            });
-            console.log(`[${this.name}] joined task #${task.id} (tx: ${hash})`);
-            this.joinedTasks.add(task.id);
+          } else if (task.phase === 0) {
+            try {
+              const hash = await this.walletClient.writeContract({
+                address: CONTRACT_ADDRESS,
+                abi: ABI,
+                functionName: "joinTask",
+                args: [BigInt(task.id)],
+                chain: monad,
+                account: this.account,
+              });
+              console.log(`[${this.name}] joined task #${task.id} (tx: ${hash})`);
+              this.joinedTasks.add(task.id);
+            } catch (joinErr) {
+              console.log(`[${this.name}] join task #${task.id}: ${(joinErr as Error).message?.slice(0, 80)}`);
+            }
           }
         }
 

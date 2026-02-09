@@ -36,7 +36,9 @@ const TICK_INTERVAL = Number(process.env.TICK_INTERVAL ?? 10000);
 
 async function loop() {
   while (true) {
-    await Promise.all(bots.map((bot) => bot.tick()));
+    for (const bot of bots) {
+      await bot.tick();
+    }
     await new Promise((r) => setTimeout(r, TICK_INTERVAL));
   }
 }
