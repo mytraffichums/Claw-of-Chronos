@@ -185,7 +185,12 @@ async function poll() {
     const currentBlock = await client.getBlockNumber();
 
     if (currentBlock > lastBlock) {
-      const fromBlock = lastBlock === 0n ? (currentBlock > 5000n ? currentBlock - 5000n : 0n) : lastBlock + 1n;
+      // On first poll, look back far enough to catch all contract events
+      // CONTRACT_DEPLOY_BLOCK can be set to avoid scanning too many blocks
+      const DEPLOY_BLOCK = BigInt(process.env.DEPLOY_BLOCK ?? "0");
+      const fromBlock = lastBlock === 0n
+        ? (DEPLOY_BLOCK > 0n ? DEPLOY_BLOCK : (currentBlock > 50000n ? currentBlock - 50000n : 0n))
+        : lastBlock + 1n;
 
       // Monad RPC limits eth_getLogs to 100-block ranges — paginate
       const MAX_RANGE = 100n;
