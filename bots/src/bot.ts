@@ -257,8 +257,8 @@ export class Bot {
       const now = Math.floor(Date.now() / 1000);
 
       try {
-        // Join if not already an agent (check on-chain, not relay phase)
-        if (!task.resolved && !task.cancelled && !this.joinedTasks.has(task.id)) {
+        // Phase 0: Open — join if not already, not cancelled, not full
+        if (task.phase === 0 && !task.cancelled && task.deliberationStart === 0 && !this.joinedTasks.has(task.id)) {
           const alreadyJoined = await this.publicClient.readContract({
             address: CONTRACT_ADDRESS,
             abi: ABI,
@@ -268,7 +268,7 @@ export class Bot {
 
           if (alreadyJoined) {
             this.joinedTasks.add(task.id);
-          } else if (task.phase === 0) {
+          } else {
             try {
               const hash = await this.walletClient.writeContract({
                 address: CONTRACT_ADDRESS,
@@ -281,9 +281,20 @@ export class Bot {
               console.log(`[${this.name}] joined task #${task.id} (tx: ${hash})`);
               this.joinedTasks.add(task.id);
             } catch (joinErr) {
-              console.log(`[${this.name}] join task #${task.id}: ${(joinErr as Error).message?.slice(0, 80)}`);
+              console.log(`[${this.name}] join task #${task.id} failed: ${(joinErr as Error).message?.slice(0, 80)}`);
             }
           }
+        }
+
+        // Catch up: if we're an agent but missed the join (e.g. bot restarted)
+        if (task.phase > 0 && task.phase < 4 && !this.joinedTasks.has(task.id)) {
+          const alreadyJoined = await this.publicClient.readContract({
+            address: CONTRACT_ADDRESS,
+            abi: ABI,
+            functionName: "isAgent",
+            args: [BigInt(task.id), this.address as Address],
+          });
+          if (alreadyJoined) this.joinedTasks.add(task.id);
         }
 
         // Phase 1: Deliberation — post message
