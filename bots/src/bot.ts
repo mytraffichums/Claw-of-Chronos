@@ -149,11 +149,10 @@ interface RelayTask {
   description: string;
   options: string[];
   bounty: string;
-  maxAgents: number;
-  registrationEnd: number;
-  deliberationEnd: number;
-  commitEnd: number;
-  revealEnd: number;
+  requiredAgents: number;
+  deliberationDuration: number;
+  deliberationStart: number;
+  cancelled: boolean;
   phase: number;
   resolved: boolean;
   agents: string[];
@@ -258,8 +257,8 @@ export class Bot {
       const now = Math.floor(Date.now() / 1000);
 
       try {
-        // Phase 0: Registration — join if not already
-        if (task.phase === 0 && now < task.registrationEnd && !this.joinedTasks.has(task.id)) {
+        // Phase 0: Open — join if not already, not cancelled, not full
+        if (task.phase === 0 && !task.cancelled && task.deliberationStart === 0 && !this.joinedTasks.has(task.id)) {
           const alreadyJoined = await this.publicClient.readContract({
             address: CONTRACT_ADDRESS,
             abi: ABI,

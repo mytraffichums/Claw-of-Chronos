@@ -5,44 +5,45 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract ChronosCore {
     // ── Types ──────────────────────────────────────────────────────────
-    enum Phase { Registration, Deliberation, Commit, Reveal, Resolved }
+    enum Phase { Open, Deliberation, Commit, Reveal, Resolved }
 
     struct Task {
         address creator;
         string description;
-        string[] options;          // 2-5 predefined options
-        uint256 bounty;            // $CHRN amount
-        uint256 maxAgents;
-        // Phase deadlines (absolute timestamps)
-        uint256 registrationEnd;
-        uint256 deliberationEnd;
-        uint256 commitEnd;
-        uint256 revealEnd;
-        // State
+        string[] options;
+        uint256 requiredAgents;
+        uint256 deliberationDuration;
+        uint256 bounty;              // requiredAgents * BOUNTY_PER_AGENT
+        uint256 deliberationStart;   // 0 until requiredAgents join
         Phase phase;
         bool resolved;
-        uint256 winningOption;     // set after resolve
+        bool cancelled;
+        uint256 winningOption;
         bool isTie;
     }
+
+    // ── Constants ─────────────────────────────────────────────────────
+    uint256 public constant BOUNTY_PER_AGENT = 1000e18;
+    uint256 public constant COMMIT_DURATION = 60;
+    uint256 public constant REVEAL_DURATION = 60;
 
     // ── Storage ────────────────────────────────────────────────────────
     IERC20 public immutable chrn;
     uint256 public taskCount;
 
     mapping(uint256 => Task) internal _tasks;
-    // taskId => agent addresses
     mapping(uint256 => address[]) public taskAgents;
     mapping(uint256 => mapping(address => bool)) public isAgent;
     // Commit-reveal
     mapping(uint256 => mapping(address => bytes32)) public commits;
     mapping(uint256 => mapping(address => bool)) public revealed;
-    mapping(uint256 => mapping(address => uint256)) public votes; // optionIndex
+    mapping(uint256 => mapping(address => uint256)) public votes;
     // Tallies
-    mapping(uint256 => mapping(uint256 => uint256)) public optionVotes; // optionIndex => count
+    mapping(uint256 => mapping(uint256 => uint256)) public optionVotes;
     mapping(uint256 => uint256) public revealCount;
     // Payout tracking
     mapping(uint256 => mapping(address => bool)) public claimed;
-    mapping(uint256 => uint256) public eligibleCount; // cached at resolve time
+    mapping(uint256 => uint256) public eligibleCount;
 
     // ── Events ─────────────────────────────────────────────────────────
     event TaskCreated(
@@ -51,12 +52,11 @@ contract ChronosCore {
         string description,
         string[] options,
         uint256 bounty,
-        uint256 maxAgents,
-        uint256 registrationEnd,
-        uint256 deliberationEnd,
-        uint256 commitEnd,
-        uint256 revealEnd
+        uint256 requiredAgents,
+        uint256 deliberationDuration
     );
+    event TaskStarted(uint256 indexed taskId, uint256 deliberationStart);
+    event TaskCancelled(uint256 indexed taskId, address indexed creator, uint256 refund);
     event AgentJoined(uint256 indexed taskId, address indexed agent);
     event PhaseAdvanced(uint256 indexed taskId, Phase phase);
     event CommitSubmitted(uint256 indexed taskId, address indexed agent);
@@ -67,13 +67,13 @@ contract ChronosCore {
 
     // ── Errors ─────────────────────────────────────────────────────────
     error InvalidOptionCount();
-    error ZeroBounty();
-    error ZeroMaxAgents();
+    error ZeroRequiredAgents();
     error ZeroDuration();
     error TransferFailed();
     error WrongPhase();
     error TaskFull();
     error AlreadyJoined();
+    error TaskIsCancelled();
     error NotAgent();
     error AlreadyCommitted();
     error AlreadyRevealed();
@@ -93,19 +93,15 @@ contract ChronosCore {
     function createTask(
         string calldata description,
         string[] calldata options,
-        uint256 bounty,
-        uint256 maxAgents,
-        uint256 regDuration,
-        uint256 delibDuration,
-        uint256 commitDuration,
-        uint256 revealDuration
+        uint256 requiredAgents,
+        uint256 deliberationDuration
     ) external returns (uint256 taskId) {
         if (options.length < 2 || options.length > 5) revert InvalidOptionCount();
-        if (bounty == 0) revert ZeroBounty();
-        if (maxAgents == 0) revert ZeroMaxAgents();
-        if (regDuration == 0 || delibDuration == 0 || commitDuration == 0 || revealDuration == 0) revert ZeroDuration();
+        if (requiredAgents == 0) revert ZeroRequiredAgents();
+        if (deliberationDuration == 0) revert ZeroDuration();
 
-        // Pull bounty from creator
+        uint256 bounty = requiredAgents * BOUNTY_PER_AGENT;
+
         bool ok = chrn.transferFrom(msg.sender, address(this), bounty);
         if (!ok) revert TransferFailed();
 
@@ -114,40 +110,57 @@ contract ChronosCore {
         Task storage t = _tasks[taskId];
         t.creator = msg.sender;
         t.description = description;
+        t.requiredAgents = requiredAgents;
+        t.deliberationDuration = deliberationDuration;
         t.bounty = bounty;
-        t.maxAgents = maxAgents;
+        t.phase = Phase.Open;
 
-        // Copy options
         for (uint256 i = 0; i < options.length; i++) {
             t.options.push(options[i]);
         }
 
-        // Set deadlines
-        t.registrationEnd = block.timestamp + regDuration;
-        t.deliberationEnd = t.registrationEnd + delibDuration;
-        t.commitEnd = t.deliberationEnd + commitDuration;
-        t.revealEnd = t.commitEnd + revealDuration;
-
-        t.phase = Phase.Registration;
-
         emit TaskCreated(
-            taskId, msg.sender, description, options, bounty, maxAgents,
-            t.registrationEnd, t.deliberationEnd, t.commitEnd, t.revealEnd
+            taskId, msg.sender, description, options, bounty,
+            requiredAgents, deliberationDuration
         );
     }
 
     // ── Join ───────────────────────────────────────────────────────────
     function joinTask(uint256 taskId) external {
         Task storage t = _tasks[taskId];
-        _syncPhase(taskId);
-        if (t.phase != Phase.Registration) revert WrongPhase();
-        if (taskAgents[taskId].length >= t.maxAgents) revert TaskFull();
+        if (t.cancelled) revert TaskIsCancelled();
+        if (t.deliberationStart != 0) revert WrongPhase();
+        if (taskAgents[taskId].length >= t.requiredAgents) revert TaskFull();
         if (isAgent[taskId][msg.sender]) revert AlreadyJoined();
 
         isAgent[taskId][msg.sender] = true;
         taskAgents[taskId].push(msg.sender);
 
         emit AgentJoined(taskId, msg.sender);
+
+        // Auto-start deliberation when full
+        if (taskAgents[taskId].length == t.requiredAgents) {
+            t.deliberationStart = block.timestamp;
+            t.phase = Phase.Deliberation;
+            emit TaskStarted(taskId, block.timestamp);
+            emit PhaseAdvanced(taskId, Phase.Deliberation);
+        }
+    }
+
+    // ── Cancel ─────────────────────────────────────────────────────────
+    function cancelTask(uint256 taskId) external {
+        Task storage t = _tasks[taskId];
+        if (msg.sender != t.creator) revert NotCreator();
+        if (t.deliberationStart != 0) revert WrongPhase();
+        if (t.cancelled) revert WrongPhase();
+
+        t.cancelled = true;
+        t.phase = Phase.Resolved;
+
+        bool ok = chrn.transfer(t.creator, t.bounty);
+        if (!ok) revert TransferFailed();
+
+        emit TaskCancelled(taskId, t.creator, t.bounty);
     }
 
     // ── Commit ─────────────────────────────────────────────────────────
@@ -170,7 +183,6 @@ contract ChronosCore {
         if (!isAgent[taskId][msg.sender]) revert NotAgent();
         if (revealed[taskId][msg.sender]) revert AlreadyRevealed();
 
-        // Hash includes taskId to prevent cross-task replay
         bytes32 expected = keccak256(abi.encodePacked(taskId, optionIndex, salt));
         if (commits[taskId][msg.sender] != expected) revert InvalidReveal();
         if (optionIndex >= t.options.length) revert InvalidReveal();
@@ -187,12 +199,10 @@ contract ChronosCore {
     function resolve(uint256 taskId) external {
         _syncPhase(taskId);
         Task storage t = _tasks[taskId];
-        // Can resolve once reveal phase has ended
         if (t.phase != Phase.Resolved) revert WrongPhase();
         if (t.resolved) revert WrongPhase();
         if (revealCount[taskId] == 0) revert NoReveals();
 
-        // Find plurality winner
         uint256 maxVotes = 0;
         uint256 winner = 0;
         bool tie = false;
@@ -212,7 +222,6 @@ contract ChronosCore {
         t.isTie = tie;
         t.resolved = true;
 
-        // Cache eligible count so claimBounty doesn't need to iterate agents
         eligibleCount[taskId] = _countEligible(taskId, winner, tie, maxVotes);
 
         emit TaskResolved(taskId, winner, tie);
@@ -239,7 +248,6 @@ contract ChronosCore {
 
         claimed[taskId][msg.sender] = true;
 
-        // Use cached eligible count from resolve()
         uint256 share = t.bounty / eligibleCount[taskId];
 
         bool ok = chrn.transfer(msg.sender, share);
@@ -254,14 +262,13 @@ contract ChronosCore {
         Task storage t = _tasks[taskId];
         if (msg.sender != t.creator) revert NotCreator();
         if (t.resolved) revert WrongPhase();
+        if (t.cancelled) revert WrongPhase();
 
-        // Can claim if: no agents joined (after registration) or no reveals happened (after reveal)
-        bool noAgents = t.phase != Phase.Registration && taskAgents[taskId].length == 0;
+        // Only valid when reveal phase ended with 0 reveals
         bool noReveals = t.phase == Phase.Resolved && revealCount[taskId] == 0;
+        if (!noReveals) revert TaskNotExpired();
 
-        if (!noAgents && !noReveals) revert TaskNotExpired();
-
-        t.resolved = true; // prevent double-claim
+        t.resolved = true;
 
         bool ok = chrn.transfer(t.creator, t.bounty);
         if (!ok) revert TransferFailed();
@@ -279,23 +286,22 @@ contract ChronosCore {
         address creator,
         string memory description,
         string[] memory options,
+        uint256 requiredAgents,
+        uint256 deliberationDuration,
         uint256 bounty,
-        uint256 maxAgents,
-        uint256 registrationEnd,
-        uint256 deliberationEnd,
-        uint256 commitEnd,
-        uint256 revealEnd,
+        uint256 deliberationStart,
         Phase phase,
         bool resolved,
+        bool cancelled,
         uint256 winningOption,
         bool isTie
     ) {
         Task storage t = _tasks[taskId];
         Phase currentPhase = _currentPhase(taskId);
         return (
-            t.creator, t.description, t.options, t.bounty, t.maxAgents,
-            t.registrationEnd, t.deliberationEnd, t.commitEnd, t.revealEnd,
-            currentPhase, t.resolved, t.winningOption, t.isTie
+            t.creator, t.description, t.options, t.requiredAgents,
+            t.deliberationDuration, t.bounty, t.deliberationStart,
+            currentPhase, t.resolved, t.cancelled, t.winningOption, t.isTie
         );
     }
 
@@ -323,12 +329,17 @@ contract ChronosCore {
 
     function _currentPhase(uint256 taskId) internal view returns (Phase) {
         Task storage t = _tasks[taskId];
-        if (t.resolved) return Phase.Resolved;
-        if (block.timestamp >= t.revealEnd) return Phase.Resolved;
-        if (block.timestamp >= t.commitEnd) return Phase.Reveal;
-        if (block.timestamp >= t.deliberationEnd) return Phase.Commit;
-        if (block.timestamp >= t.registrationEnd) return Phase.Deliberation;
-        return Phase.Registration;
+        if (t.resolved || t.cancelled) return Phase.Resolved;
+        if (t.deliberationStart == 0) return Phase.Open;
+
+        uint256 delibEnd = t.deliberationStart + t.deliberationDuration;
+        uint256 commitEnd = delibEnd + COMMIT_DURATION;
+        uint256 revealEnd = commitEnd + REVEAL_DURATION;
+
+        if (block.timestamp >= revealEnd) return Phase.Resolved;
+        if (block.timestamp >= commitEnd) return Phase.Reveal;
+        if (block.timestamp >= delibEnd) return Phase.Commit;
+        return Phase.Deliberation;
     }
 
     function _maxVoteCount(uint256 taskId) internal view returns (uint256 maxVotes) {

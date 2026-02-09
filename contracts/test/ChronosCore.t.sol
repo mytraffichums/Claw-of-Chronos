@@ -5,8 +5,8 @@ import "forge-std/Test.sol";
 import "../src/ChronosCore.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract MockCHRN is ERC20 {
-    constructor() ERC20("Chronos", "CHRN") {
+contract MockCOC is ERC20 {
+    constructor() ERC20("Claw of Chronos", "COC") {
         _mint(msg.sender, 1_000_000e18);
     }
 
@@ -16,32 +16,29 @@ contract MockCHRN is ERC20 {
 }
 
 contract ChronosCoreTest is Test {
-    ChronosCore public core;
-    MockCHRN public token;
+    ChronosCore core;
+    MockCOC token;
 
     address creator = address(0x1);
     address agent1 = address(0x2);
     address agent2 = address(0x3);
     address agent3 = address(0x4);
 
-    uint256 constant BOUNTY = 100e18;
-
-    // Phase durations
-    uint256 constant REG = 60;
-    uint256 constant DELIB = 120;
+    uint256 constant REQUIRED_AGENTS = 3;
+    uint256 constant DELIB = 300;
+    uint256 constant BOUNTY_PER_AGENT = 1000e18;
     uint256 constant COMMIT = 60;
     uint256 constant REVEAL = 60;
 
     string[] options;
 
     function setUp() public {
-        token = new MockCHRN();
+        token = new MockCOC();
         core = new ChronosCore(address(token));
 
-        // Fund creator
-        token.transfer(creator, BOUNTY * 10);
+        uint256 totalBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
+        token.transfer(creator, totalBounty * 10);
 
-        // Approve
         vm.prank(creator);
         token.approve(address(core), type(uint256).max);
 
@@ -53,7 +50,7 @@ contract ChronosCoreTest is Test {
     // ── Helpers ────────────────────────────────────────────────────────
     function _createTask() internal returns (uint256) {
         vm.prank(creator);
-        return core.createTask("Test task", options, BOUNTY, 5, REG, DELIB, COMMIT, REVEAL);
+        return core.createTask("Test task", options, REQUIRED_AGENTS, DELIB);
     }
 
     function _joinTask(uint256 taskId, address agent) internal {
@@ -65,24 +62,23 @@ contract ChronosCoreTest is Test {
         return keccak256(abi.encodePacked(taskId, optionIndex, salt));
     }
 
-    // ── Test full lifecycle ────────────────────────────────────────────
+    // ── Tests ──────────────────────────────────────────────────────────
+
     function test_fullLifecycle() public {
         uint256 taskId = _createTask();
+        uint256 expectedBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
+        assertEq(token.balanceOf(address(core)), expectedBounty);
 
-        // Verify task created
-        assertEq(core.taskCount(), 1);
-        assertEq(token.balanceOf(address(core)), BOUNTY);
-
-        // Join
         _joinTask(taskId, agent1);
         _joinTask(taskId, agent2);
         _joinTask(taskId, agent3);
-        assertEq(core.agentCount(taskId), 3);
 
-        // Skip to commit phase
-        vm.warp(block.timestamp + REG + DELIB + 1);
+        (,,,,,,uint256 delibStart, ChronosCore.Phase phase,,,,) = core.getTask(taskId);
+        assertEq(uint256(phase), uint256(ChronosCore.Phase.Deliberation));
+        assertTrue(delibStart > 0);
 
-        // All agents commit for option 0 (majority)
+        vm.warp(block.timestamp + DELIB + 1);
+
         bytes32 salt1 = bytes32(uint256(111));
         bytes32 salt2 = bytes32(uint256(222));
         bytes32 salt3 = bytes32(uint256(333));
@@ -94,7 +90,6 @@ contract ChronosCoreTest is Test {
         vm.prank(agent3);
         core.commit(taskId, _computeCommit(taskId, 1, salt3));
 
-        // Skip to reveal phase
         vm.warp(block.timestamp + COMMIT + 1);
 
         vm.prank(agent1);
@@ -104,53 +99,157 @@ contract ChronosCoreTest is Test {
         vm.prank(agent3);
         core.reveal(taskId, 1, salt3);
 
-        assertEq(core.revealCount(taskId), 3);
-
-        // Skip past reveal
         vm.warp(block.timestamp + REVEAL + 1);
 
-        // Resolve
         core.resolve(taskId);
 
-        // Check result
-        (,,,,,,,,, ChronosCore.Phase phase, bool resolved, uint256 winOpt, bool isTie) = core.getTask(taskId);
-        assertEq(uint256(phase), uint256(ChronosCore.Phase.Resolved));
-        assertTrue(resolved);
-        assertEq(winOpt, 0);
-        assertFalse(isTie);
-
-        // Claim bounty — agent1 and agent2 should get 50e18 each
-        uint256 bal1Before = token.balanceOf(agent1);
         vm.prank(agent1);
         core.claimBounty(taskId);
-        assertEq(token.balanceOf(agent1) - bal1Before, 50e18);
+        assertEq(token.balanceOf(agent1), expectedBounty / 2);
 
         vm.prank(agent2);
         core.claimBounty(taskId);
-        assertEq(token.balanceOf(agent2), 50e18);
+        assertEq(token.balanceOf(agent2), expectedBounty / 2);
 
-        // Agent3 voted for losing option — should revert
         vm.prank(agent3);
         vm.expectRevert(ChronosCore.NotWinner.selector);
         core.claimBounty(taskId);
     }
 
-    // ── Test tie ───────────────────────────────────────────────────────
-    function test_tie() public {
+    function test_cancelBeforeAnyAgents() public {
+        uint256 balBefore = token.balanceOf(creator);
+        uint256 taskId = _createTask();
+        uint256 expectedBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
+        assertEq(token.balanceOf(creator), balBefore - expectedBounty);
+
+        vm.prank(creator);
+        core.cancelTask(taskId);
+
+        assertEq(token.balanceOf(creator), balBefore);
+
+        (,,,,,,, ChronosCore.Phase phase,, bool cancelled,,) = core.getTask(taskId);
+        assertTrue(cancelled);
+        assertEq(uint256(phase), uint256(ChronosCore.Phase.Resolved));
+    }
+
+    function test_cancelAfterSomeAgents() public {
+        uint256 balBefore = token.balanceOf(creator);
         uint256 taskId = _createTask();
 
         _joinTask(taskId, agent1);
         _joinTask(taskId, agent2);
 
-        vm.warp(block.timestamp + REG + DELIB + 1);
+        vm.prank(creator);
+        core.cancelTask(taskId);
+
+        assertEq(token.balanceOf(creator), balBefore);
+    }
+
+    function test_cannotCancelAfterDeliberation() public {
+        uint256 taskId = _createTask();
+
+        _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+        _joinTask(taskId, agent3);
+
+        vm.prank(creator);
+        vm.expectRevert(ChronosCore.WrongPhase.selector);
+        core.cancelTask(taskId);
+    }
+
+    function test_creatorJoinsOwnTask() public {
+        vm.prank(creator);
+        uint256 taskId = core.createTask("Creator joins", options, 2, DELIB);
+
+        vm.prank(creator);
+        core.joinTask(taskId);
+
+        _joinTask(taskId, agent1);
+
+        (,,,,,,uint256 delibStart, ChronosCore.Phase phase,,,,) = core.getTask(taskId);
+        assertEq(uint256(phase), uint256(ChronosCore.Phase.Deliberation));
+        assertTrue(delibStart > 0);
+
+        vm.warp(block.timestamp + DELIB + 1);
 
         bytes32 salt1 = bytes32(uint256(111));
         bytes32 salt2 = bytes32(uint256(222));
+
+        vm.prank(creator);
+        core.commit(taskId, _computeCommit(taskId, 0, salt1));
+        vm.prank(agent1);
+        core.commit(taskId, _computeCommit(taskId, 0, salt2));
+
+        vm.warp(block.timestamp + COMMIT + 1);
+
+        vm.prank(creator);
+        core.reveal(taskId, 0, salt1);
+        vm.prank(agent1);
+        core.reveal(taskId, 0, salt2);
+
+        vm.warp(block.timestamp + REVEAL + 1);
+
+        core.resolve(taskId);
+
+        uint256 bounty = 2 * BOUNTY_PER_AGENT;
+
+        vm.prank(creator);
+        core.claimBounty(taskId);
+
+        vm.prank(agent1);
+        core.claimBounty(taskId);
+        assertEq(token.balanceOf(agent1), bounty / 2);
+    }
+
+    function test_singleAgent() public {
+        vm.prank(creator);
+        uint256 taskId = core.createTask("Solo task", options, 1, DELIB);
+
+        _joinTask(taskId, agent1);
+
+        (,,,,,,uint256 delibStart, ChronosCore.Phase phase,,,,) = core.getTask(taskId);
+        assertEq(uint256(phase), uint256(ChronosCore.Phase.Deliberation));
+        assertTrue(delibStart > 0);
+
+        vm.warp(block.timestamp + DELIB + 1);
+
+        bytes32 salt1 = bytes32(uint256(111));
+        vm.prank(agent1);
+        core.commit(taskId, _computeCommit(taskId, 0, salt1));
+
+        vm.warp(block.timestamp + COMMIT + 1);
+
+        vm.prank(agent1);
+        core.reveal(taskId, 0, salt1);
+
+        vm.warp(block.timestamp + REVEAL + 1);
+
+        core.resolve(taskId);
+
+        vm.prank(agent1);
+        core.claimBounty(taskId);
+        assertEq(token.balanceOf(agent1), BOUNTY_PER_AGENT);
+    }
+
+    function test_tie() public {
+        uint256 taskId = _createTask();
+
+        _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+        _joinTask(taskId, agent3);
+
+        vm.warp(block.timestamp + DELIB + 1);
+
+        bytes32 salt1 = bytes32(uint256(111));
+        bytes32 salt2 = bytes32(uint256(222));
+        bytes32 salt3 = bytes32(uint256(333));
 
         vm.prank(agent1);
         core.commit(taskId, _computeCommit(taskId, 0, salt1));
         vm.prank(agent2);
         core.commit(taskId, _computeCommit(taskId, 1, salt2));
+        vm.prank(agent3);
+        core.commit(taskId, _computeCommit(taskId, 2, salt3));
 
         vm.warp(block.timestamp + COMMIT + 1);
 
@@ -158,79 +257,92 @@ contract ChronosCoreTest is Test {
         core.reveal(taskId, 0, salt1);
         vm.prank(agent2);
         core.reveal(taskId, 1, salt2);
+        vm.prank(agent3);
+        core.reveal(taskId, 2, salt3);
 
         vm.warp(block.timestamp + REVEAL + 1);
 
         core.resolve(taskId);
 
-        (,,,,,,,,,, bool resolved,, bool isTie) = core.getTask(taskId);
-        assertTrue(resolved);
+        (,,,,,,,,,, uint256 winOpt, bool isTie) = core.getTask(taskId);
         assertTrue(isTie);
 
-        // Both should be able to claim, 50 each
+        uint256 expectedBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
+
         vm.prank(agent1);
         core.claimBounty(taskId);
-        assertEq(token.balanceOf(agent1), 50e18);
+        assertEq(token.balanceOf(agent1), expectedBounty / 3);
 
         vm.prank(agent2);
         core.claimBounty(taskId);
-        assertEq(token.balanceOf(agent2), 50e18);
+        assertEq(token.balanceOf(agent2), expectedBounty / 3);
+
+        vm.prank(agent3);
+        core.claimBounty(taskId);
+        assertEq(token.balanceOf(agent3), expectedBounty / 3);
     }
 
-    // ── Test no reveals → creator claims ───────────────────────────────
-    function test_noReveals_creatorClaims() public {
+    function test_noReveals_creatorClaimsExpired() public {
+        uint256 taskId = _createTask();
+        uint256 balBefore = token.balanceOf(creator);
+
+        _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+        _joinTask(taskId, agent3);
+
+        vm.warp(block.timestamp + DELIB + COMMIT + REVEAL + 1);
+
+        vm.prank(creator);
+        core.claimExpired(taskId);
+
+        uint256 expectedBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
+        assertEq(token.balanceOf(creator), balBefore + expectedBounty);
+    }
+
+    function test_joinFullTask_reverts() public {
         uint256 taskId = _createTask();
 
         _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+        _joinTask(taskId, agent3);
 
-        // Skip through all phases, agent never commits/reveals
-        vm.warp(block.timestamp + REG + DELIB + COMMIT + REVEAL + 1);
-
-        uint256 balBefore = token.balanceOf(creator);
-        vm.prank(creator);
-        core.claimExpired(taskId);
-        assertEq(token.balanceOf(creator) - balBefore, BOUNTY);
-    }
-
-    // ── Test no agents joined → creator claims ─────────────────────────
-    function test_noAgents_creatorClaims() public {
-        uint256 taskId = _createTask();
-
-        // Skip past registration
-        vm.warp(block.timestamp + REG + 1);
-
-        uint256 balBefore = token.balanceOf(creator);
-        vm.prank(creator);
-        core.claimExpired(taskId);
-        assertEq(token.balanceOf(creator) - balBefore, BOUNTY);
-    }
-
-    // ── Test wrong phase reverts ───────────────────────────────────────
-    function test_joinAfterRegistration_reverts() public {
-        uint256 taskId = _createTask();
-        vm.warp(block.timestamp + REG + 1);
-
-        vm.prank(agent1);
+        // Once full, deliberation started → deliberationStart != 0 → WrongPhase
+        address agent4 = address(0x5);
+        vm.prank(agent4);
         vm.expectRevert(ChronosCore.WrongPhase.selector);
         core.joinTask(taskId);
     }
 
-    function test_commitBeforeCommitPhase_reverts() public {
+    function test_joinCancelledTask_reverts() public {
         uint256 taskId = _createTask();
-        _joinTask(taskId, agent1);
+
+        vm.prank(creator);
+        core.cancelTask(taskId);
 
         vm.prank(agent1);
-        vm.expectRevert(ChronosCore.WrongPhase.selector);
-        core.commit(taskId, bytes32(0));
+        vm.expectRevert(ChronosCore.TaskIsCancelled.selector);
+        core.joinTask(taskId);
     }
 
-    function test_doubleJoin_reverts() public {
+    function test_bountyCalculation() public {
         uint256 taskId = _createTask();
-        _joinTask(taskId, agent1);
+        uint256 expectedBounty = REQUIRED_AGENTS * BOUNTY_PER_AGENT;
 
-        vm.prank(agent1);
-        vm.expectRevert(ChronosCore.AlreadyJoined.selector);
-        core.joinTask(taskId);
+        (,,,,,uint256 bounty,,,,,,) = core.getTask(taskId);
+        assertEq(bounty, expectedBounty);
+        assertEq(token.balanceOf(address(core)), expectedBounty);
+    }
+
+    function test_partialJoin_noPhaseChange() public {
+        uint256 taskId = _createTask();
+
+        _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+
+        (,,,,,,uint256 delibStart, ChronosCore.Phase phase,,,,) = core.getTask(taskId);
+        assertEq(uint256(phase), uint256(ChronosCore.Phase.Open));
+        assertEq(delibStart, 0);
+        assertEq(core.agentCount(taskId), 2);
     }
 
     function test_invalidOptionCount_reverts() public {
@@ -239,110 +351,40 @@ contract ChronosCoreTest is Test {
 
         vm.prank(creator);
         vm.expectRevert(ChronosCore.InvalidOptionCount.selector);
-        core.createTask("Bad task", badOptions, BOUNTY, 5, REG, DELIB, COMMIT, REVEAL);
+        core.createTask("Bad task", badOptions, 3, DELIB);
     }
 
-    // ── Test zero maxAgents reverts ────────────────────────────────────
-    function test_zeroMaxAgents_reverts() public {
+    function test_zeroRequiredAgents_reverts() public {
         vm.prank(creator);
-        vm.expectRevert(ChronosCore.ZeroMaxAgents.selector);
-        core.createTask("Bad task", options, BOUNTY, 0, REG, DELIB, COMMIT, REVEAL);
+        vm.expectRevert(ChronosCore.ZeroRequiredAgents.selector);
+        core.createTask("Bad task", options, 0, DELIB);
     }
 
-    // ── Test zero duration reverts ──────────────────────────────────────
     function test_zeroDuration_reverts() public {
         vm.prank(creator);
         vm.expectRevert(ChronosCore.ZeroDuration.selector);
-        core.createTask("Bad task", options, BOUNTY, 5, 0, DELIB, COMMIT, REVEAL);
-
-        vm.prank(creator);
-        vm.expectRevert(ChronosCore.ZeroDuration.selector);
-        core.createTask("Bad task", options, BOUNTY, 5, REG, 0, COMMIT, REVEAL);
-
-        vm.prank(creator);
-        vm.expectRevert(ChronosCore.ZeroDuration.selector);
-        core.createTask("Bad task", options, BOUNTY, 5, REG, DELIB, 0, REVEAL);
-
-        vm.prank(creator);
-        vm.expectRevert(ChronosCore.ZeroDuration.selector);
-        core.createTask("Bad task", options, BOUNTY, 5, REG, DELIB, COMMIT, 0);
+        core.createTask("Bad task", options, 3, 0);
     }
 
-    // ── Test single voter gets full bounty ──────────────────────────────
-    function test_singleVoter_fullBounty() public {
+    function test_doubleJoin_reverts() public {
         uint256 taskId = _createTask();
 
         _joinTask(taskId, agent1);
 
-        vm.warp(block.timestamp + REG + DELIB + 1);
-
-        bytes32 salt1 = bytes32(uint256(111));
         vm.prank(agent1);
-        core.commit(taskId, _computeCommit(taskId, 0, salt1));
-
-        vm.warp(block.timestamp + COMMIT + 1);
-        vm.prank(agent1);
-        core.reveal(taskId, 0, salt1);
-
-        vm.warp(block.timestamp + REVEAL + 1);
-        core.resolve(taskId);
-
-        uint256 balBefore = token.balanceOf(agent1);
-        vm.prank(agent1);
-        core.claimBounty(taskId);
-        assertEq(token.balanceOf(agent1) - balBefore, BOUNTY);
+        vm.expectRevert(ChronosCore.AlreadyJoined.selector);
+        core.joinTask(taskId);
     }
 
-    // ── Test invalid optionIndex in reveal ──────────────────────────────
-    function test_invalidOptionIndex_reverts() public {
+    function test_commitBeforeCommitPhase_reverts() public {
         uint256 taskId = _createTask();
+
         _joinTask(taskId, agent1);
+        _joinTask(taskId, agent2);
+        _joinTask(taskId, agent3);
 
-        vm.warp(block.timestamp + REG + DELIB + 1);
-
-        // Commit with out-of-bounds option index (99)
-        bytes32 salt1 = bytes32(uint256(111));
-        bytes32 badCommit = keccak256(abi.encodePacked(taskId, uint256(99), salt1));
         vm.prank(agent1);
-        core.commit(taskId, badCommit);
-
-        vm.warp(block.timestamp + COMMIT + 1);
-
-        // Reveal with the matching invalid option — should revert with InvalidReveal
-        vm.prank(agent1);
-        vm.expectRevert(ChronosCore.InvalidReveal.selector);
-        core.reveal(taskId, 99, salt1);
-    }
-
-    // ── Test claimExpired during deliberation with no agents ─────────────
-    function test_claimExpired_noAgents_duringDelib() public {
-        uint256 taskId = _createTask();
-
-        // Skip past registration into deliberation — no one joined
-        vm.warp(block.timestamp + REG + 1);
-
-        uint256 balBefore = token.balanceOf(creator);
-        vm.prank(creator);
-        core.claimExpired(taskId);
-        assertEq(token.balanceOf(creator) - balBefore, BOUNTY);
-    }
-
-    function test_resolveBeforeRevealEnd_reverts() public {
-        uint256 taskId = _createTask();
-        _joinTask(taskId, agent1);
-
-        vm.warp(block.timestamp + REG + DELIB + 1);
-
-        bytes32 salt1 = bytes32(uint256(111));
-        vm.prank(agent1);
-        core.commit(taskId, _computeCommit(taskId, 0, salt1));
-
-        vm.warp(block.timestamp + COMMIT + 1);
-        vm.prank(agent1);
-        core.reveal(taskId, 0, salt1);
-
-        // Still in reveal phase — resolve should revert
         vm.expectRevert(ChronosCore.WrongPhase.selector);
-        core.resolve(taskId);
+        core.commit(taskId, bytes32(uint256(123)));
     }
 }

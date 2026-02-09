@@ -6,8 +6,10 @@ import Link from "next/link";
 import Image from "next/image";
 
 const RELAY_URL = process.env.NEXT_PUBLIC_RELAY_URL ?? "http://localhost:3001";
+const COMMIT_DURATION = 60;
+const REVEAL_DURATION = 60;
 
-const PHASE_NAMES = ["Registration", "Deliberation", "Commit", "Reveal", "Resolved"];
+const PHASE_NAMES = ["Open", "Deliberation", "Finalizing", "Finalizing", "Resolved"];
 const PHASE_CLASSES = [
   "phase-registration",
   "phase-deliberation",
@@ -29,11 +31,10 @@ interface TaskDetail {
   description: string;
   options: string[];
   bounty: string;
-  maxAgents: number;
-  registrationEnd: number;
-  deliberationEnd: number;
-  commitEnd: number;
-  revealEnd: number;
+  requiredAgents: number;
+  deliberationDuration: number;
+  deliberationStart: number;
+  cancelled: boolean;
   phase: number;
   resolved: boolean;
   winningOption: number;
@@ -50,7 +51,7 @@ function PhaseBar({ phase }: { phase: number }) {
     <div className="flex gap-1 mb-6">
       {PHASE_NAMES.map((name, i) => (
         <div
-          key={name}
+          key={`phase-${i}`}
           className={`flex-1 h-2 rounded-full ${
             i <= phase ? "bg-[var(--purple)]" : "bg-[rgba(0,0,0,0.1)]"
           }`}
@@ -135,18 +136,17 @@ export default function TaskDetailPage() {
     );
   }
 
-  const deadlines = [
-    task.registrationEnd,
-    task.deliberationEnd,
-    task.commitEnd,
-    task.revealEnd,
-  ];
-  const currentDeadline = task.phase < 4 ? deadlines[task.phase] : 0;
+  // Compute deadlines dynamically from deliberationStart
+  const delibEnd = task.deliberationStart > 0 ? task.deliberationStart + task.deliberationDuration : 0;
+  const commitEnd = delibEnd > 0 ? delibEnd + COMMIT_DURATION : 0;
+  const revealEnd = commitEnd > 0 ? commitEnd + REVEAL_DURATION : 0;
+  const deadlines = [0, delibEnd, commitEnd, revealEnd];
+  const currentDeadline = task.phase >= 1 && task.phase < 4 ? deadlines[task.phase] : 0;
   const bountyFormatted = Math.floor(Number(task.bounty) / 1e18);
 
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar — hidden on mobile */}
+      {/* Sidebar */}
       <aside className="hidden md:flex w-20 flex-shrink-0 flex-col items-center py-8 overflow-hidden">
         <div className="flex flex-col items-center gap-0 flex-1">
           {Array.from({ length: 8 }, (_, i) => (
@@ -177,19 +177,32 @@ export default function TaskDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <h1 className="font-compagnon text-3xl font-medium">Task #{task.id}</h1>
           <span className={`phase-badge ${PHASE_CLASSES[task.phase] ?? "phase-resolved"}`}>
-            {PHASE_NAMES[task.phase] ?? "Resolved"}
+            {task.cancelled ? "Cancelled" : PHASE_NAMES[task.phase] ?? "Resolved"}
           </span>
         </div>
 
         <PhaseBar phase={task.phase} />
 
-        {/* Timer */}
-        {task.phase < 4 && (
+        {/* Timer / Status */}
+        {task.phase === 0 && !task.cancelled && (
+          <div className="task-card mb-6 text-center">
+            <div className="text-sm text-[var(--text-dim)] mb-1">Waiting for agents</div>
+            <span className="font-mattone text-[var(--purple)] text-2xl">
+              {task.agents.length}/{task.requiredAgents}
+            </span>
+          </div>
+        )}
+        {task.phase >= 1 && task.phase < 4 && currentDeadline > 0 && (
           <div className="task-card mb-6 text-center">
             <div className="text-sm text-[var(--text-dim)] mb-1">
               {PHASE_NAMES[task.phase]} ends in
             </div>
             <Countdown deadline={currentDeadline} />
+          </div>
+        )}
+        {task.cancelled && (
+          <div className="task-card mb-6 text-center">
+            <span className="font-mattone text-red-500 text-lg">Task Cancelled</span>
           </div>
         )}
 
@@ -199,7 +212,7 @@ export default function TaskDetailPage() {
           <div className="grid grid-cols-2 gap-4 text-xs text-[var(--text-dim)]">
             <div>Creator: <span className="font-mattone">{shortAddr(task.creator)}</span></div>
             <div>Bounty: <span className="text-[var(--text)]">{bountyFormatted} $CoC</span></div>
-            <div>Agents: {task.agents.length}/{task.maxAgents}</div>
+            <div>Agents: {task.agents.length}/{task.requiredAgents}</div>
             <div>Reveals: {task.revealCount}</div>
           </div>
         </div>

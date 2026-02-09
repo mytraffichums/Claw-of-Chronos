@@ -44,17 +44,18 @@ body {
 
 /* Task card */
 .task-card {
-  background: var(--card-bg);
+  background: rgba(255, 255, 255, 0.35);
   border: 1px solid var(--card-border);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 1.25rem;
-  backdrop-filter: blur(8px);
-  transition: transform 0.15s, box-shadow 0.15s;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
 }
 
 .task-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 /* Phase badge */
@@ -73,7 +74,7 @@ body {
 .phase-deliberation { background: var(--purple); color: white; }
 .phase-commit { background: var(--purple); color: white; }
 .phase-reveal { background: var(--purple); color: white; }
-.phase-resolved { background: rgba(90, 85, 75, 0.4); color: var(--text-dim); }
+.phase-resolved { background: rgba(90, 85, 75, 0.5); color: white; }
 
 /* Agent count badge */
 .agent-badge {

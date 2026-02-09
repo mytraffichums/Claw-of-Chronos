@@ -6,6 +6,8 @@ const CONTRACT_ADDRESS = process.env.CHRONOS_CORE as Address;
 const POLL_INTERVAL = Number(process.env.POLL_INTERVAL ?? 5000);
 
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? 143);
+const COMMIT_DURATION = 60;
+const REVEAL_DURATION = 60;
 
 const monad = {
   id: CHAIN_ID,
@@ -25,12 +27,11 @@ export interface CachedTask {
   creator: string;
   description: string;
   options: string[];
-  bounty: string; // bigint as string for JSON
-  maxAgents: number;
-  registrationEnd: number;
-  deliberationEnd: number;
-  commitEnd: number;
-  revealEnd: number;
+  bounty: string;
+  requiredAgents: number;
+  deliberationDuration: number;
+  deliberationStart: number; // 0 until full
+  cancelled: boolean;
   phase: number;
   resolved: boolean;
   winningOption: number;
@@ -54,7 +55,13 @@ export function getTask(id: number): CachedTask | undefined {
 
 // ── ABI fragments for events ───────────────────────────────────────────
 const taskCreatedEvent = parseAbiItem(
-  "event TaskCreated(uint256 indexed taskId, address indexed creator, string description, string[] options, uint256 bounty, uint256 maxAgents, uint256 registrationEnd, uint256 deliberationEnd, uint256 commitEnd, uint256 revealEnd)"
+  "event TaskCreated(uint256 indexed taskId, address indexed creator, string description, string[] options, uint256 bounty, uint256 requiredAgents, uint256 deliberationDuration)"
+);
+const taskStartedEvent = parseAbiItem(
+  "event TaskStarted(uint256 indexed taskId, uint256 deliberationStart)"
+);
+const taskCancelledEvent = parseAbiItem(
+  "event TaskCancelled(uint256 indexed taskId, address indexed creator, uint256 refund)"
 );
 const agentJoinedEvent = parseAbiItem(
   "event AgentJoined(uint256 indexed taskId, address indexed agent)"
@@ -74,6 +81,8 @@ const taskResolvedEvent = parseAbiItem(
 
 const allEvents = [
   taskCreatedEvent,
+  taskStartedEvent,
+  taskCancelledEvent,
   agentJoinedEvent,
   phaseAdvancedEvent,
   commitSubmittedEvent,
@@ -96,11 +105,10 @@ function processLog(log: Log<bigint, number, false>) {
         description: args.description,
         options: args.options,
         bounty: args.bounty.toString(),
-        maxAgents: Number(args.maxAgents),
-        registrationEnd: Number(args.registrationEnd),
-        deliberationEnd: Number(args.deliberationEnd),
-        commitEnd: Number(args.commitEnd),
-        revealEnd: Number(args.revealEnd),
+        requiredAgents: Number(args.requiredAgents),
+        deliberationDuration: Number(args.deliberationDuration),
+        deliberationStart: 0,
+        cancelled: false,
         phase: 0,
         resolved: false,
         winningOption: 0,
@@ -110,6 +118,22 @@ function processLog(log: Log<bigint, number, false>) {
         optionVotes: new Array(args.options.length).fill(0),
         reveals: [],
       });
+      break;
+    }
+    case "TaskStarted": {
+      const task = tasks.get(Number(args.taskId));
+      if (task) {
+        task.deliberationStart = Number(args.deliberationStart);
+        task.phase = 1;
+      }
+      break;
+    }
+    case "TaskCancelled": {
+      const task = tasks.get(Number(args.taskId));
+      if (task) {
+        task.cancelled = true;
+        task.phase = 4;
+      }
       break;
     }
     case "AgentJoined": {
@@ -125,7 +149,6 @@ function processLog(log: Log<bigint, number, false>) {
       break;
     }
     case "CommitSubmitted": {
-      // Just track that commit happened (no extra state needed)
       break;
     }
     case "RevealSubmitted": {
@@ -144,7 +167,7 @@ function processLog(log: Log<bigint, number, false>) {
         task.resolved = true;
         task.winningOption = Number(args.winningOption);
         task.isTie = args.isTie;
-        task.phase = 4; // Resolved
+        task.phase = 4;
       }
       break;
     }
@@ -156,7 +179,7 @@ let lastBlock = 0n;
 let polling = false;
 
 async function poll() {
-  if (polling) return; // prevent concurrent polls
+  if (polling) return;
   polling = true;
   try {
     const currentBlock = await client.getBlockNumber();
@@ -183,14 +206,23 @@ async function poll() {
       lastBlock = currentBlock;
     }
 
-    // Always update phases based on current time
+    // Update phases based on current time
     const now = Math.floor(Date.now() / 1000);
     for (const task of tasks.values()) {
-      if (task.resolved) continue;
-      if (now >= task.revealEnd) task.phase = 4;
-      else if (now >= task.commitEnd) task.phase = 3;
-      else if (now >= task.deliberationEnd) task.phase = 2;
-      else if (now >= task.registrationEnd) task.phase = 1;
+      if (task.resolved || task.cancelled) continue;
+      if (task.deliberationStart === 0) {
+        task.phase = 0; // Open — waiting for agents
+        continue;
+      }
+
+      const delibEnd = task.deliberationStart + task.deliberationDuration;
+      const commitEnd = delibEnd + COMMIT_DURATION;
+      const revealEnd = commitEnd + REVEAL_DURATION;
+
+      if (now >= revealEnd) task.phase = 4;
+      else if (now >= commitEnd) task.phase = 3;
+      else if (now >= delibEnd) task.phase = 2;
+      else task.phase = 1;
     }
   } catch (err) {
     console.error("[chain] poll error:", err instanceof Error ? err.message : String(err));
@@ -205,6 +237,6 @@ export function startPoller() {
     process.exit(1);
   }
   console.log(`[chain] polling ${CONTRACT_ADDRESS} every ${POLL_INTERVAL}ms`);
-  poll(); // initial
+  poll();
   setInterval(poll, POLL_INTERVAL);
 }

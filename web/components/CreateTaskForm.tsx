@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, type Address } from "viem";
 
-const CHRONOS_CORE = "0x6bEC6376210564c6a01373E432615316AB85f6Bf" as Address;
+const CHRONOS_CORE = "0xc3F988DfFa5b3e49Bb887F8eF86c9081Fa381e97" as Address;
 const COC_TOKEN = "0xf042d6b96a3A18513A6AcA95ff0EC13dE4047777" as Address;
+const BOUNTY_PER_AGENT = 1000n;
 
 const ERC20_ABI = [
   {
@@ -27,32 +28,30 @@ const CHRONOS_ABI = [
     inputs: [
       { name: "description", type: "string" },
       { name: "options", type: "string[]" },
-      { name: "bounty", type: "uint256" },
-      { name: "maxAgents", type: "uint256" },
-      { name: "regDuration", type: "uint256" },
-      { name: "delibDuration", type: "uint256" },
-      { name: "commitDuration", type: "uint256" },
-      { name: "revealDuration", type: "uint256" },
+      { name: "requiredAgents", type: "uint256" },
+      { name: "deliberationDuration", type: "uint256" },
     ],
     outputs: [{ name: "taskId", type: "uint256" }],
     stateMutability: "nonpayable",
   },
 ] as const;
 
+const PRESETS = { quick: 300n, standard: 600n, deep: 1200n } as const;
+
 export default function CreateTaskForm() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const { writeContract, data: hash, isPending, error } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const [description, setDescription] = useState("");
   const [options, setOptions] = useState(["", ""]);
-  const [bounty, setBounty] = useState("100");
-  const [maxAgents, setMaxAgents] = useState("5");
-  const [regDuration, setRegDuration] = useState("90");
-  const [delibDuration, setDelibDuration] = useState("120");
-  const [commitDuration, setCommitDuration] = useState("90");
-  const [revealDuration, setRevealDuration] = useState("90");
+  const [requiredAgents, setRequiredAgents] = useState("3");
+  const [deliberationPreset, setDeliberationPreset] = useState<"quick" | "standard" | "deep">("standard");
   const [step, setStep] = useState<"form" | "approve" | "create">("form");
+
+  const deliberationDuration = PRESETS[deliberationPreset];
+  const agents = BigInt(requiredAgents || "0");
+  const totalBounty = agents * BOUNTY_PER_AGENT * 10n ** 18n;
 
   const addOption = () => {
     if (options.length < 5) setOptions([...options, ""]);
@@ -75,7 +74,7 @@ export default function CreateTaskForm() {
       address: COC_TOKEN,
       abi: ERC20_ABI,
       functionName: "approve",
-      args: [CHRONOS_CORE, parseEther(bounty)],
+      args: [CHRONOS_CORE, totalBounty],
     });
   };
 
@@ -89,12 +88,8 @@ export default function CreateTaskForm() {
       args: [
         description,
         options.filter((o) => o.trim() !== ""),
-        parseEther(bounty),
-        BigInt(maxAgents),
-        BigInt(regDuration),
-        BigInt(delibDuration),
-        BigInt(commitDuration),
-        BigInt(revealDuration),
+        agents,
+        deliberationDuration,
       ],
     });
   };
@@ -102,23 +97,19 @@ export default function CreateTaskForm() {
   const resetForm = () => {
     setDescription("");
     setOptions(["", ""]);
-    setBounty("100");
-    setMaxAgents("5");
-    setRegDuration("90");
-    setDelibDuration("120");
-    setCommitDuration("90");
-    setRevealDuration("90");
+    setRequiredAgents("3");
+    setDeliberationPreset("standard");
     setStep("form");
   };
 
   const validOptions = options.filter((o) => o.trim() !== "");
-  const canSubmit = description.trim() && validOptions.length >= 2 && validOptions.length <= 5 && parseFloat(bounty) > 0;
+  const canSubmit = description.trim() && validOptions.length >= 2 && validOptions.length <= 5 && agents > 0n;
 
   return (
-    <div className="bg-[var(--card-bg)] border-2 border-[var(--border)] p-6 rounded-lg max-w-2xl">
+    <div className="bg-[var(--card-bg)] border border-[var(--card-border)] p-6 rounded-xl backdrop-filter backdrop-blur-lg">
       <h3 className="font-compagnon text-2xl font-medium text-[var(--text)] mb-4">Create Task</h3>
 
-      {/* Description */}
+      {/* Question */}
       <div className="mb-4">
         <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Question</label>
         <input
@@ -126,7 +117,7 @@ export default function CreateTaskForm() {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Should we ship feature X?"
-          className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
+          className="w-full px-3 py-2 bg-[rgba(255,255,255,0.4)] border border-[var(--card-border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--purple)] focus:ring-1 focus:ring-[var(--purple)]"
         />
       </div>
 
@@ -140,12 +131,12 @@ export default function CreateTaskForm() {
               value={opt}
               onChange={(e) => updateOption(idx, e.target.value)}
               placeholder={`Option ${idx + 1}`}
-              className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
+              className="flex-1 px-3 py-2 bg-[rgba(255,255,255,0.4)] border border-[var(--card-border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--purple)] focus:ring-1 focus:ring-[var(--purple)]"
             />
             {options.length > 2 && (
               <button
                 onClick={() => removeOption(idx)}
-                className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text-dim)] rounded hover:bg-[var(--card-bg)]"
+                className="px-3 py-2 bg-[rgba(255,255,255,0.4)] border border-[var(--card-border)] text-[var(--text)] rounded hover:bg-[rgba(255,255,255,0.6)]"
               >
                 ✕
               </button>
@@ -155,79 +146,58 @@ export default function CreateTaskForm() {
         {options.length < 5 && (
           <button
             onClick={addOption}
-            className="mt-2 px-4 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded hover:bg-[var(--card-bg)] font-mattone text-sm"
+            className="mt-2 px-4 py-2 bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--text)] rounded hover:bg-[rgba(190,182,170,0.75)] font-mattone text-sm transition-all"
           >
             + Add Option
           </button>
         )}
       </div>
 
-      {/* Bounty & Agents */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Bounty ($CoC)</label>
-          <input
-            type="number"
-            value={bounty}
-            onChange={(e) => setBounty(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
-        </div>
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Max Agents</label>
-          <input
-            type="number"
-            value={maxAgents}
-            onChange={(e) => setMaxAgents(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
+      {/* Required Agents */}
+      <div className="mb-4">
+        <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Required Agents</label>
+        <input
+          type="number"
+          value={requiredAgents}
+          onChange={(e) => setRequiredAgents(e.target.value)}
+          min="1"
+          className="w-full px-3 py-2 bg-[rgba(255,255,255,0.4)] border border-[var(--card-border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--purple)] focus:ring-1 focus:ring-[var(--purple)]"
+        />
+      </div>
+
+      {/* Deliberation Duration Presets */}
+      <div className="mb-4">
+        <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Discussion Duration</label>
+        <div className="flex gap-2">
+          {(["quick", "standard", "deep"] as const).map((preset) => (
+            <button
+              key={preset}
+              onClick={() => setDeliberationPreset(preset)}
+              className={`flex-1 px-4 py-2 rounded font-mattone text-sm border transition-all ${
+                deliberationPreset === preset
+                  ? "bg-[var(--text)] text-white border-[var(--text)]"
+                  : "bg-[var(--card-bg)] text-[var(--text)] border-[var(--card-border)] hover:bg-[rgba(190,182,170,0.75)]"
+              }`}
+            >
+              {preset === "quick" ? "Quick (5m)" : preset === "standard" ? "Standard (10m)" : "Deep (20m)"}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Phase Durations */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Registration (sec)</label>
-          <input
-            type="number"
-            value={regDuration}
-            onChange={(e) => setRegDuration(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
+      {/* Cost Display */}
+      <div className="mb-4 p-3 bg-[rgba(255,255,255,0.5)] rounded border border-[var(--card-border)]">
+        <div className="font-mattone text-sm text-[var(--text)]">
+          Total Cost:{" "}
+          <span className="font-medium">
+            {agents > 0n ? `${(agents * BOUNTY_PER_AGENT).toLocaleString()} $CoC` : "---"}
+          </span>
         </div>
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Deliberation (sec)</label>
-          <input
-            type="number"
-            value={delibDuration}
-            onChange={(e) => setDelibDuration(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
-        </div>
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Commit (sec)</label>
-          <input
-            type="number"
-            value={commitDuration}
-            onChange={(e) => setCommitDuration(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
-        </div>
-        <div>
-          <label className="block font-mattone text-sm text-[var(--text-dim)] mb-2">Reveal (sec)</label>
-          <input
-            type="number"
-            value={revealDuration}
-            onChange={(e) => setRevealDuration(e.target.value)}
-            min="1"
-            className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded focus:outline-none focus:border-[var(--text-dim)]"
-          />
-        </div>
+        {agents > 0n && (
+          <div className="font-mattone text-xs text-[var(--text)] mt-1 opacity-75">
+            {requiredAgents} agents × 1,000 $CoC per agent
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -238,7 +208,7 @@ export default function CreateTaskForm() {
           <p className="text-green-600 font-mattone text-sm mb-2">Task created successfully!</p>
           <button
             onClick={resetForm}
-            className="px-4 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded hover:bg-[var(--card-bg)] font-mattone"
+            className="px-4 py-2 bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--text)] rounded hover:bg-[rgba(190,182,170,0.75)] font-mattone transition-all"
           >
             Create Another
           </button>
@@ -247,23 +217,29 @@ export default function CreateTaskForm() {
         <button
           onClick={handleApprove}
           disabled={!canSubmit || isPending}
-          className="w-full px-4 py-3 bg-[var(--text)] text-[var(--bg)] rounded font-mattone font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isPending ? "Approving..." : "1. Approve $CoC"}
         </button>
       ) : step === "approve" ? (
         <div>
           {isConfirming ? (
-            <p className="text-[var(--text-dim)] font-mattone text-sm">Waiting for approval confirmation...</p>
+            <p className="text-[var(--text)] font-mattone text-sm">Waiting for approval confirmation...</p>
           ) : hash ? (
             <button
               onClick={handleCreate}
-              className="w-full px-4 py-3 bg-[var(--text)] text-[var(--bg)] rounded font-mattone font-medium hover:opacity-90"
+              className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90"
             >
               2. Create Task
             </button>
-          ) : null}
+          ) : (
+            <p className="text-[var(--text)] font-mattone text-sm">Approval transaction submitted...</p>
+          )}
         </div>
+      ) : step === "create" ? (
+        <p className="text-[var(--text)] font-mattone text-sm">
+          {isConfirming ? "Creating task..." : "Task creation submitted..."}
+        </p>
       ) : null}
 
       {error && <p className="text-red-600 font-mattone text-sm mt-2">{error.message}</p>}
