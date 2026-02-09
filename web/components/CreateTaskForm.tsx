@@ -40,6 +40,11 @@ const PRESETS = { quick: 300n, standard: 600n, deep: 1200n } as const;
 
 export default function CreateTaskForm() {
   const { isConnected } = useAccount();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Separate hooks for approve and create
   const {
@@ -236,7 +241,7 @@ export default function CreateTaskForm() {
       </div>
 
       {/* Actions */}
-      {!isConnected ? (
+      {!mounted || !isConnected ? (
         <p className="text-[var(--text-dim)] font-mattone text-sm">Connect wallet to create task</p>
       ) : step === "done" ? (
         <div>
