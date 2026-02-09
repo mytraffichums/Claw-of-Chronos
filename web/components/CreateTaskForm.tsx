@@ -36,7 +36,7 @@ const CHRONOS_ABI = [
   },
 ] as const;
 
-const PRESETS = { quick: 300n, standard: 600n, deep: 1200n } as const;
+const PRESETS = { quick: 10n, standard: 30n, deep: 60n } as const;
 
 export default function CreateTaskForm() {
   const { isConnected } = useAccount();
@@ -219,7 +219,7 @@ export default function CreateTaskForm() {
                   : "bg-[var(--card-bg)] text-[var(--text)] border-[var(--card-border)] hover:bg-[rgba(190,182,170,0.75)]"
               }`}
             >
-              {preset === "quick" ? "Quick (5m)" : preset === "standard" ? "Standard (10m)" : "Deep (20m)"}
+              {preset === "quick" ? "Quick (10s)" : preset === "standard" ? "Standard (30s)" : "Deep (60s)"}
             </button>
           ))}
         </div>

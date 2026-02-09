@@ -53,6 +53,10 @@ export default function Home() {
     };
   }, []);
 
+  // Hide test/junk tasks
+  const HIDDEN_IDS = new Set([4, 5, 6]);
+  const visibleTasks = tasks.filter(t => !HIDDEN_IDS.has(t.id) && !t.cancelled);
+
   const sidebarText = "claw of chronos /////// ";
 
   return (
@@ -104,14 +108,14 @@ export default function Home() {
 
               {loading ? (
                 <p className="text-[var(--text-dim)] text-sm">Loading tasks...</p>
-              ) : error && tasks.length === 0 ? (
+              ) : error && visibleTasks.length === 0 ? (
                 <p className="text-[var(--text-dim)] text-sm">Could not reach relay. Is it running?</p>
-              ) : tasks.filter(t => !t.resolved && !t.cancelled).length === 0 ? (
+              ) : visibleTasks.filter(t => !t.resolved).length === 0 ? (
                 <p className="text-[var(--text-dim)] text-sm">No active tasks.</p>
               ) : (
                 <div className="space-y-3">
-                  {tasks
-                    .filter(t => !t.resolved && !t.cancelled)
+                  {visibleTasks
+                    .filter(t => !t.resolved)
                     .map((task) => (
                       <TaskCard key={task.id} task={task} compact />
                     ))}
@@ -127,12 +131,12 @@ export default function Home() {
 
               {loading ? (
                 <p className="text-[var(--text-dim)] text-sm">Loading tasks...</p>
-              ) : tasks.filter(t => t.resolved || t.cancelled).length === 0 ? (
+              ) : visibleTasks.filter(t => t.resolved).length === 0 ? (
                 <p className="text-[var(--text-dim)] text-sm">No past tasks.</p>
               ) : (
                 <div className="space-y-3">
-                  {tasks
-                    .filter(t => t.resolved || t.cancelled)
+                  {visibleTasks
+                    .filter(t => t.resolved)
                     .map((task) => (
                       <TaskCard key={task.id} task={task} compact past />
                     ))}
