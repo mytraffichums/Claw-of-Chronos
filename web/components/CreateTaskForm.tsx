@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseEther, type Address } from "viem";
+import { type Address } from "viem";
 
 const CHRONOS_CORE = "0xc3F988DfFa5b3e49Bb887F8eF86c9081Fa381e97" as Address;
 const COC_TOKEN = "0xf042d6b96a3A18513A6AcA95ff0EC13dE4047777" as Address;
@@ -40,20 +40,53 @@ const PRESETS = { quick: 300n, standard: 600n, deep: 1200n } as const;
 
 export default function CreateTaskForm() {
   const { isConnected } = useAccount();
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  // Separate hooks for approve and create
+  const {
+    writeContract: writeApprove,
+    data: approveHash,
+    isPending: approvePending,
+    error: approveError,
+  } = useWriteContract();
+  const {
+    isLoading: approveConfirming,
+    isSuccess: approveSuccess,
+  } = useWaitForTransactionReceipt({ hash: approveHash });
+
+  const {
+    writeContract: writeCreate,
+    data: createHash,
+    isPending: createPending,
+    error: createError,
+  } = useWriteContract();
+  const {
+    isLoading: createConfirming,
+    isSuccess: createSuccess,
+  } = useWaitForTransactionReceipt({ hash: createHash });
 
   const [description, setDescription] = useState("");
   const [options, setOptions] = useState(["", ""]);
   const [requiredAgents, setRequiredAgents] = useState("3");
   const [deliberationPreset, setDeliberationPreset] = useState<"quick" | "standard" | "deep">("standard");
-  const [step, setStep] = useState<"form" | "approve" | "create">("form");
-
-  const taskCreated = step === "create" && isSuccess;
+  const [step, setStep] = useState<"form" | "approve" | "create" | "done">("form");
 
   const deliberationDuration = PRESETS[deliberationPreset];
   const agents = BigInt(requiredAgents || "0");
   const totalBounty = agents * BOUNTY_PER_AGENT * 10n ** 18n;
+
+  // Move to create step when approve confirms
+  useEffect(() => {
+    if (step === "approve" && approveSuccess) {
+      setStep("create");
+    }
+  }, [step, approveSuccess]);
+
+  // Move to done when create confirms
+  useEffect(() => {
+    if (step === "create" && createSuccess) {
+      setStep("done");
+    }
+  }, [step, createSuccess]);
 
   const addOption = () => {
     if (options.length < 5) setOptions([...options, ""]);
@@ -69,10 +102,10 @@ export default function CreateTaskForm() {
     setOptions(newOpts);
   };
 
-  const handleApprove = async () => {
+  const handleApprove = () => {
     if (!isConnected) return;
     setStep("approve");
-    writeContract({
+    writeApprove({
       address: COC_TOKEN,
       abi: ERC20_ABI,
       functionName: "approve",
@@ -80,10 +113,9 @@ export default function CreateTaskForm() {
     });
   };
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
     if (!isConnected) return;
-    setStep("create");
-    writeContract({
+    writeCreate({
       address: CHRONOS_CORE,
       abi: CHRONOS_ABI,
       functionName: "createTask",
@@ -106,6 +138,7 @@ export default function CreateTaskForm() {
 
   const validOptions = options.filter((o) => o.trim() !== "");
   const canSubmit = description.trim() && validOptions.length >= 2 && validOptions.length <= 5 && agents > 0n;
+  const error = approveError || createError;
 
   return (
     <div className="bg-[var(--card-bg)] border border-[var(--card-border)] p-6 rounded-xl backdrop-filter backdrop-blur-lg">
@@ -205,7 +238,7 @@ export default function CreateTaskForm() {
       {/* Actions */}
       {!isConnected ? (
         <p className="text-[var(--text-dim)] font-mattone text-sm">Connect wallet to create task</p>
-      ) : taskCreated ? (
+      ) : step === "done" ? (
         <div>
           <p className="text-green-600 font-mattone text-sm mb-2">Task created successfully!</p>
           <button
@@ -218,33 +251,34 @@ export default function CreateTaskForm() {
       ) : step === "form" ? (
         <button
           onClick={handleApprove}
-          disabled={!canSubmit || isPending}
+          disabled={!canSubmit || approvePending}
           className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isPending ? "Approving..." : "1. Approve $CoC"}
+          {approvePending ? "Confirm in wallet..." : "1. Approve $CoC"}
         </button>
       ) : step === "approve" ? (
         <div>
-          {isPending ? (
-            <p className="text-[var(--text)] font-mattone text-sm">Confirm approval in wallet...</p>
-          ) : isConfirming ? (
-            <p className="text-[var(--text)] font-mattone text-sm">Waiting for approval confirmation...</p>
-          ) : isSuccess ? (
+          <p className="text-[var(--text)] font-mattone text-sm">
+            {approveConfirming ? "Waiting for approval confirmation..." : "Approval submitted..."}
+          </p>
+        </div>
+      ) : step === "create" ? (
+        <div>
+          {createPending ? (
+            <p className="text-[var(--text)] font-mattone text-sm">Confirm in wallet...</p>
+          ) : createConfirming ? (
+            <p className="text-[var(--text)] font-mattone text-sm">Creating task...</p>
+          ) : !createHash ? (
             <button
               onClick={handleCreate}
-              disabled={isPending}
               className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90"
             >
               2. Create Task
             </button>
           ) : (
-            <p className="text-[var(--text)] font-mattone text-sm">Approval transaction submitted...</p>
+            <p className="text-[var(--text)] font-mattone text-sm">Creating task...</p>
           )}
         </div>
-      ) : step === "create" ? (
-        <p className="text-[var(--text)] font-mattone text-sm">
-          {isConfirming ? "Creating task..." : "Task creation submitted..."}
-        </p>
       ) : null}
 
       {error && <p className="text-red-600 font-mattone text-sm mt-2">{error.message}</p>}
