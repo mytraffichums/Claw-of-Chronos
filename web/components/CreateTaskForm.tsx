@@ -49,6 +49,8 @@ export default function CreateTaskForm() {
   const [deliberationPreset, setDeliberationPreset] = useState<"quick" | "standard" | "deep">("standard");
   const [step, setStep] = useState<"form" | "approve" | "create">("form");
 
+  const taskCreated = step === "create" && isSuccess;
+
   const deliberationDuration = PRESETS[deliberationPreset];
   const agents = BigInt(requiredAgents || "0");
   const totalBounty = agents * BOUNTY_PER_AGENT * 10n ** 18n;
@@ -203,7 +205,7 @@ export default function CreateTaskForm() {
       {/* Actions */}
       {!isConnected ? (
         <p className="text-[var(--text-dim)] font-mattone text-sm">Connect wallet to create task</p>
-      ) : isSuccess ? (
+      ) : taskCreated ? (
         <div>
           <p className="text-green-600 font-mattone text-sm mb-2">Task created successfully!</p>
           <button
@@ -223,11 +225,14 @@ export default function CreateTaskForm() {
         </button>
       ) : step === "approve" ? (
         <div>
-          {isConfirming ? (
+          {isPending ? (
+            <p className="text-[var(--text)] font-mattone text-sm">Confirm approval in wallet...</p>
+          ) : isConfirming ? (
             <p className="text-[var(--text)] font-mattone text-sm">Waiting for approval confirmation...</p>
-          ) : hash ? (
+          ) : isSuccess ? (
             <button
               onClick={handleCreate}
+              disabled={isPending}
               className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90"
             >
               2. Create Task
