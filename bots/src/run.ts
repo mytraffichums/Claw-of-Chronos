@@ -38,6 +38,7 @@ async function loop() {
   while (true) {
     for (const bot of bots) {
       await bot.tick();
+      await new Promise((r) => setTimeout(r, 2000)); // stagger bots
     }
     await new Promise((r) => setTimeout(r, TICK_INTERVAL));
   }

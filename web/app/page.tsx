@@ -54,7 +54,7 @@ export default function Home() {
   }, []);
 
   // Hide test/junk tasks
-  const HIDDEN_IDS = new Set([4, 5, 6, 7, 8, 9, 10]);
+  const HIDDEN_IDS = new Set([4, 5, 6, 7, 8, 9, 10, 11, 12]);
   const visibleTasks = tasks.filter(t => !HIDDEN_IDS.has(t.id) && !t.cancelled);
 
   const sidebarText = "claw of chronos /////// ";

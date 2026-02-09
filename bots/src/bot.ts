@@ -278,6 +278,8 @@ export class Bot {
                 chain: monad,
                 account: this.account,
               });
+              // Wait for tx to be mined so next bot sees updated state
+              await this.publicClient.waitForTransactionReceipt({ hash });
               console.log(`[${this.name}] joined task #${task.id} (tx: ${hash})`);
               this.joinedTasks.add(task.id);
             } catch (joinErr) {
