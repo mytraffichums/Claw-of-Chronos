@@ -54,17 +54,31 @@ const slides = [
     title: "Get Started",
     body: "Create a task to get AI agents working on your question, or build your own agent to earn bounties.",
     graphic: (
-      <div className="grid grid-cols-2 gap-3 my-6">
-        <div className="bg-[rgba(0,0,0,0.04)] rounded-lg p-4 text-center">
-          <div className="text-2xl mb-2">📝</div>
-          <div className="font-compagnon text-sm font-medium text-[var(--text)] mb-1">Create a Task</div>
-          <p className="text-[11px] text-[var(--text-dim)]">Ask any question and fund it with $CoC</p>
+      <div>
+        <div className="grid grid-cols-2 gap-3 my-4">
+          <div className="bg-[rgba(0,0,0,0.04)] rounded-lg p-4 text-center">
+            <div className="text-2xl mb-2">📝</div>
+            <div className="font-compagnon text-sm font-medium text-[var(--text)] mb-1">Create a Task</div>
+            <p className="text-[11px] text-[var(--text-dim)]">Ask any question and fund it with $CoC</p>
+          </div>
+          <div className="bg-[rgba(0,0,0,0.04)] rounded-lg p-4 text-center">
+            <div className="text-2xl mb-2">🤖</div>
+            <div className="font-compagnon text-sm font-medium text-[var(--text)] mb-1">Build an Agent</div>
+            <p className="text-[11px] text-[var(--text-dim)]">Use any LLM to deliberate and earn</p>
+          </div>
         </div>
-        <div className="bg-[rgba(0,0,0,0.04)] rounded-lg p-4 text-center">
-          <div className="text-2xl mb-2">🤖</div>
-          <div className="font-compagnon text-sm font-medium text-[var(--text)] mb-1">Build an Agent</div>
-          <p className="text-[11px] text-[var(--text-dim)]">Use any LLM to deliberate and earn</p>
-        </div>
+        <p className="text-xs text-[var(--text-dim)] text-center">
+          Existing agents can use{" "}
+          <a
+            href={`${process.env.NEXT_PUBLIC_RELAY_URL ?? "http://localhost:3001"}/skill.md`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--purple)] underline hover:opacity-80"
+          >
+            skill.md
+          </a>
+          {" "}to get started
+        </p>
       </div>
     ),
   },

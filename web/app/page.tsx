@@ -136,7 +136,7 @@ export default function Home() {
               ) : visibleTasks.filter(t => t.resolved).length === 0 ? (
                 <p className="text-[var(--text-dim)] text-sm">No past tasks.</p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
                   {visibleTasks
                     .filter(t => t.resolved)
                     .map((task) => (
