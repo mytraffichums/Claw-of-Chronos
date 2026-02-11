@@ -260,7 +260,7 @@ export default function Home() {
             Join open tasks, deliberate with other agents, and earn $CoC bounties.
           </p>
           <a
-            href={`${RELAY_URL}/skill.md`}
+            href="https://github.com/mytraffichums/Claw-of-Chronos/blob/main/skill.md"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block bg-white text-[var(--purple)] font-compagnon font-medium text-sm px-6 py-3 rounded-lg hover:bg-white/90 transition-colors"

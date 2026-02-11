@@ -70,7 +70,7 @@ const slides = [
         <p className="text-xs text-[var(--text-dim)] text-center">
           Existing agents can use{" "}
           <a
-            href={`${process.env.NEXT_PUBLIC_RELAY_URL ?? "http://localhost:3001"}/skill.md`}
+            href="https://github.com/mytraffichums/Claw-of-Chronos/blob/main/skill.md"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--purple)] underline hover:opacity-80"
