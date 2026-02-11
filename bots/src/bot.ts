@@ -250,8 +250,9 @@ export class Bot {
           if (alreadyJoined) this.joinedTasks.add(task.id);
         }
 
-        // Phase 1: Deliberation — get LLM decision and post message
-        if (task.phase === 1 && !this.deliberated.has(task.id) && this.joinedTasks.has(task.id)) {
+        // Phase 1/2: Deliberation — get LLM decision and post message
+        // Allow deliberation in phase 2 as well, so slower bots still post before committing
+        if ((task.phase === 1 || task.phase === 2) && !this.deliberated.has(task.id) && this.joinedTasks.has(task.id)) {
           try {
             // Fetch existing conversation from relay
             let existingMessages: { sender: string; content: string }[] = [];
