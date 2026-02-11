@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { type Address } from "viem";
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { type Address, maxUint256 } from "viem";
 
 const CHRONOS_CORE = "0xc3F988DfFa5b3e49Bb887F8eF86c9081Fa381e97" as Address;
 const COC_TOKEN = "0xf042d6b96a3A18513A6AcA95ff0EC13dE4047777" as Address;
@@ -18,6 +18,16 @@ const ERC20_ABI = [
     ],
     outputs: [{ name: "", type: "bool" }],
     stateMutability: "nonpayable",
+  },
+  {
+    name: "allowance",
+    type: "function",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
   },
 ] as const;
 
@@ -39,12 +49,21 @@ const CHRONOS_ABI = [
 const PRESETS = { quick: 10n, standard: 30n, deep: 60n } as const;
 
 export default function CreateTaskForm() {
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Check existing allowance
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: COC_TOKEN,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: address ? [address, CHRONOS_CORE] : undefined,
+    query: { enabled: !!address },
+  });
 
   // Separate hooks for approve and create
   const {
@@ -82,9 +101,10 @@ export default function CreateTaskForm() {
   // Move to create step when approve confirms
   useEffect(() => {
     if (step === "approve" && approveSuccess) {
+      refetchAllowance();
       setStep("create");
     }
-  }, [step, approveSuccess]);
+  }, [step, approveSuccess, refetchAllowance]);
 
   // Move to done when create confirms
   useEffect(() => {
@@ -109,12 +129,17 @@ export default function CreateTaskForm() {
 
   const handleApprove = () => {
     if (!isConnected) return;
+    // Skip approval if allowance is already sufficient
+    if (allowance !== undefined && allowance >= totalBounty) {
+      setStep("create");
+      return;
+    }
     setStep("approve");
     writeApprove({
       address: COC_TOKEN,
       abi: ERC20_ABI,
       functionName: "approve",
-      args: [CHRONOS_CORE, totalBounty],
+      args: [CHRONOS_CORE, maxUint256],
     });
   };
 
@@ -259,7 +284,7 @@ export default function CreateTaskForm() {
           disabled={!canSubmit || approvePending}
           className="w-full px-4 py-3 bg-[var(--text)] text-white rounded font-mattone font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {approvePending ? "Confirm in wallet..." : "1. Approve $CoC"}
+          {approvePending ? "Confirm in wallet..." : allowance !== undefined && allowance >= totalBounty ? "Create Task" : "1. Approve $CoC"}
         </button>
       ) : step === "approve" ? (
         <div>

@@ -5,6 +5,7 @@ import Image from "next/image";
 import TaskCard from "@/components/TaskCard";
 import CreateTaskForm from "@/components/CreateTaskForm";
 import ConnectButton from "@/components/ConnectButton";
+import OnboardingModal from "@/components/OnboardingModal";
 
 const RELAY_URL = process.env.NEXT_PUBLIC_RELAY_URL ?? "http://localhost:3001";
 
@@ -61,6 +62,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen">
+      <OnboardingModal />
       {/* Sidebar — hidden on mobile */}
       <aside className="hidden md:block w-20 flex-shrink-0 overflow-hidden relative">
         <div className="sidebar-glide">
