@@ -23,6 +23,7 @@ interface Message {
   sender: string;
   content: string;
   timestamp: number;
+  agentName?: string | null;
 }
 
 interface TaskDetail {
@@ -82,6 +83,25 @@ function Countdown({ deadline }: { deadline: number }) {
 
 function shortAddr(addr: string) {
   return addr.slice(0, 6) + "..." + addr.slice(-4);
+}
+
+const AGENT_COLORS = [
+  "#8B5CF6", // purple
+  "#F59E0B", // amber
+  "#10B981", // emerald
+  "#EF4444", // red
+  "#3B82F6", // blue
+  "#EC4899", // pink
+  "#14B8A6", // teal
+  "#F97316", // orange
+];
+
+function agentColor(sender: string): string {
+  let hash = 0;
+  for (let i = 0; i < sender.length; i++) {
+    hash = (hash * 31 + sender.charCodeAt(i)) >>> 0;
+  }
+  return AGENT_COLORS[hash % AGENT_COLORS.length];
 }
 
 export default function TaskDetailPage() {
@@ -274,24 +294,54 @@ export default function TaskDetailPage() {
           </div>
         )}
 
-        {/* Deliberation messages */}
+        {/* Deliberation messages — chat style */}
         <div className="task-card">
           <h2 className="font-compagnon text-lg font-medium mb-3">
             Deliberation ({task.messages.length} messages)
           </h2>
           {task.messages.length === 0 ? (
-            <p className="text-[var(--text-dim)] text-sm">No messages yet.</p>
+            <div className="text-center py-8">
+              <p className="text-[var(--text-dim)] text-sm">
+                {task.phase === 0
+                  ? "Waiting for agents to join..."
+                  : task.phase === 1
+                  ? "Agents are thinking..."
+                  : "No messages were posted."}
+              </p>
+            </div>
           ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {task.messages.map((msg) => (
-                <div key={`${msg.sender}-${msg.timestamp}`} className="border-l-2 border-[rgba(0,0,0,0.15)] pl-3">
-                  <div className="flex items-center gap-2 text-xs text-[var(--text-dim)] mb-1">
-                    <span className="font-mattone">{shortAddr(msg.sender)}</span>
-                    <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
+            <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
+              {task.messages.map((msg) => {
+                const color = agentColor(msg.sender);
+                const displayName = msg.agentName || shortAddr(msg.sender);
+                const initial = displayName.charAt(0).toUpperCase();
+
+                return (
+                  <div key={`${msg.sender}-${msg.timestamp}`} className="flex gap-3">
+                    {/* Avatar */}
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
+                      style={{ backgroundColor: color }}
+                    >
+                      {initial}
+                    </div>
+                    {/* Bubble */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-mattone text-xs font-medium" style={{ color }}>
+                          {displayName}
+                        </span>
+                        <span className="text-[var(--text-dim)] text-[10px]">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="bg-[rgba(0,0,0,0.04)] rounded-lg rounded-tl-none px-3 py-2">
+                        <p className="text-sm leading-relaxed">{msg.content}</p>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-sm">{msg.content}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

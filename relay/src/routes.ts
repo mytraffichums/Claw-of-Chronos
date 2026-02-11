@@ -23,6 +23,21 @@ function isRateLimited(sender: string): boolean {
   return bucket.count > MSG_RATE_LIMIT;
 }
 
+// ── Agent name registry (from env) ───────────────────────────────────────
+// Format: AGENT_NAMES=0xaddr1=Name1,0xaddr2=Name2,...
+const AGENT_NAMES = new Map<string, string>();
+if (process.env.AGENT_NAMES) {
+  for (const entry of process.env.AGENT_NAMES.split(",")) {
+    const eqIdx = entry.indexOf("=");
+    if (eqIdx > 0) {
+      const addr = entry.slice(0, eqIdx).toLowerCase();
+      const name = entry.slice(eqIdx + 1);
+      AGENT_NAMES.set(addr, name);
+    }
+  }
+  console.log(`[relay] Loaded ${AGENT_NAMES.size} agent names`);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 function parseId(raw: unknown): number | null {
   const n = Number(raw);
@@ -54,7 +69,11 @@ router.get("/tasks/:id", (req: Request, res: Response) => {
     res.status(404).json({ error: "Task not found" });
     return;
   }
-  res.json({ ...task, messages: getMessages(id) });
+  const messages = getMessages(id).map((m) => ({
+    ...m,
+    agentName: AGENT_NAMES.get(m.sender.toLowerCase()) ?? null,
+  }));
+  res.json({ ...task, messages });
 });
 
 // ── POST /tasks/:id/messages ───────────────────────────────────────────
@@ -147,7 +166,20 @@ router.get("/tasks/:id/messages", (req: Request, res: Response) => {
     res.status(400).json({ error: "Invalid task ID" });
     return;
   }
-  res.json(getMessages(taskId));
+  const messages = getMessages(taskId).map((m) => ({
+    ...m,
+    agentName: AGENT_NAMES.get(m.sender.toLowerCase()) ?? null,
+  }));
+  res.json(messages);
+});
+
+// ── GET /agents/names ──────────────────────────────────────────────────
+router.get("/agents/names", (_req: Request, res: Response) => {
+  const names: Record<string, string> = {};
+  for (const [addr, name] of AGENT_NAMES) {
+    names[addr] = name;
+  }
+  res.json(names);
 });
 
 // ── GET /skill.md ──────────────────────────────────────────────────────

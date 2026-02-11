@@ -8,6 +8,7 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { getDecision, type LLMDecision, type Personality } from "./llm.js";
 
 // ── Config ─────────────────────────────────────────────────────────────
 const RPC_URL = process.env.MONAD_RPC ?? "https://rpc.monad.xyz";
@@ -116,32 +117,8 @@ const ABI = [
   },
 ] as const;
 
-// ── Personality types ──────────────────────────────────────────────────
-type Personality = "analyst" | "contrarian" | "follower";
-
-const DELIB_MESSAGES: Record<Personality, string[]> = {
-  analyst: [
-    "After careful analysis, I think we should consider the long-term implications of each option.",
-    "Looking at the data, option {opt} seems most promising based on fundamentals.",
-    "Let me break this down systematically. The key factors here are risk and reward.",
-    "From an analytical perspective, we need to weigh the trade-offs carefully.",
-    "The rational choice here requires examining all variables objectively.",
-  ],
-  contrarian: [
-    "I disagree with the popular sentiment. Let's think about this differently.",
-    "Everyone seems to be leaning one way, but have you considered the opposite?",
-    "Playing devil's advocate here — option {opt} might not be as good as it seems.",
-    "The crowd is often wrong. I'm going to push back on the consensus.",
-    "What if the obvious choice is actually the worst one? Let's reconsider.",
-  ],
-  follower: [
-    "I agree with the general direction. Option {opt} makes sense to me.",
-    "The arguments presented so far are compelling. I'm aligned with the majority.",
-    "This seems like a clear case. I'll go with what most agents are suggesting.",
-    "I trust the collective wisdom here. Let's move forward together.",
-    "No objections from me — the consensus is strong on this one.",
-  ],
-};
+// Re-export Personality from llm module
+export type { Personality } from "./llm.js";
 
 // ── Relay task type ────────────────────────────────────────────────────
 interface RelayTask {
@@ -174,6 +151,7 @@ export class Bot {
   private revealedTasks = new Set<number>();
   private resolvedTasks = new Set<number>();
   private claimedTasks = new Set<number>();
+  private decisions = new Map<number, LLMDecision>();
 
   constructor(name: string, personality: Personality, privateKey: `0x${string}`) {
     this.name = name;
@@ -191,36 +169,9 @@ export class Bot {
     return this.account.address;
   }
 
-  // ── Choose option based on personality ─────────────────────────────
-  chooseOption(task: RelayTask): number {
-    const n = task.options.length;
-    switch (this.personality) {
-      case "analyst":
-        // Picks the "middle" option or first if only 2
-        return Math.floor(n / 2);
-      case "contrarian":
-        // Picks the last option (least popular assumption)
-        return n - 1;
-      case "follower":
-        // Picks the first option (follows the default)
-        // If other reveals exist, follow majority
-        if (task.reveals.length > 0) {
-          const counts = new Map<number, number>();
-          for (const r of task.reveals) {
-            counts.set(r.optionIndex, (counts.get(r.optionIndex) ?? 0) + 1);
-          }
-          let best = 0;
-          let bestCount = 0;
-          for (const [opt, count] of counts) {
-            if (count > bestCount) {
-              bestCount = count;
-              best = opt;
-            }
-          }
-          return best;
-        }
-        return 0;
-    }
+  // ── Get cached LLM decision option (fallback to 0) ─────────────────
+  getCachedOption(taskId: number): number {
+    return this.decisions.get(taskId)?.optionIndex ?? 0;
   }
 
   // ── Post deliberation message to relay ─────────────────────────────
@@ -299,15 +250,36 @@ export class Bot {
           if (alreadyJoined) this.joinedTasks.add(task.id);
         }
 
-        // Phase 1: Deliberation — post message
+        // Phase 1: Deliberation — get LLM decision and post message
         if (task.phase === 1 && !this.deliberated.has(task.id) && this.joinedTasks.has(task.id)) {
-          const templates = DELIB_MESSAGES[this.personality];
-          const optIdx = this.chooseOption(task);
-          let msg = templates[Math.floor(Math.random() * templates.length)];
-          msg = msg.replace("{opt}", `#${optIdx} (${task.options[optIdx]})`);
+          try {
+            // Fetch existing conversation from relay
+            let existingMessages: { sender: string; content: string }[] = [];
+            try {
+              const msgRes = await fetch(`${RELAY_URL}/tasks/${task.id}/messages`);
+              if (msgRes.ok) existingMessages = await msgRes.json();
+            } catch {}
 
-          await this.postMessage(task.id, msg);
-          console.log(`[${this.name}] deliberated on task #${task.id}`);
+            const decision = await getDecision(
+              this.personality,
+              task.description,
+              task.options,
+              existingMessages
+            );
+
+            this.decisions.set(task.id, decision);
+            await this.postMessage(task.id, decision.deliberationMessage);
+            console.log(`[${this.name}] deliberated on task #${task.id} — chose option #${decision.optionIndex}`);
+            console.log(`[${this.name}] reasoning: ${decision.reasoning}`);
+          } catch (llmErr) {
+            console.warn(`[${this.name}] LLM failed for task #${task.id}:`, (llmErr as Error).message);
+            this.decisions.set(task.id, {
+              optionIndex: 0,
+              reasoning: "LLM fallback",
+              deliberationMessage: `After considering the options, I'll go with option #0 (${task.options[0]}).`,
+            });
+            await this.postMessage(task.id, `After considering the options, I'll go with option #0 (${task.options[0]}).`);
+          }
           this.deliberated.add(task.id);
         }
 
@@ -321,7 +293,7 @@ export class Bot {
           });
 
           if (existing === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-            const optionIndex = this.chooseOption(task);
+            const optionIndex = this.getCachedOption(task.id);
             const salt = keccak256(
               encodePacked(["address", "uint256", "uint256"], [this.address as Address, BigInt(task.id), BigInt(Date.now())])
             ) as `0x${string}`;
